@@ -1764,6 +1764,33 @@ def run_loop(state: dict, max_iter: int) -> None:
     best = state.get("best_version", "v1")
     log.info(f"\n=== threejs_loop END ===  best={best}  score={state.get('best_score', 0):.3f}")
     log.info(f"Best asset: {candidate_path(asset_name, best)}")
+    _git_backup(asset_name, best, state.get("best_score", 0))
+
+def _git_backup(asset_name: str, best_version: str, score: float) -> None:
+    """Commit and push latest assets to the configured git remote (best-effort)."""
+    import subprocess
+    repo = Path(__file__).parent
+    if not (repo / ".git").exists():
+        return
+    try:
+        subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True)
+        msg = f"auto: {asset_name} {best_version} score={score:.3f}"
+        result = subprocess.run(
+            ["git", "commit", "-m", msg],
+            cwd=repo, capture_output=True, text=True
+        )
+        if "nothing to commit" in result.stdout:
+            log.info("[git] nothing new to commit")
+            return
+        push = subprocess.run(
+            ["git", "push"], cwd=repo, capture_output=True, text=True, timeout=30
+        )
+        if push.returncode == 0:
+            log.info(f"[git] pushed: {msg}")
+        else:
+            log.warning(f"[git] push failed: {push.stderr.strip()}")
+    except Exception as exc:
+        log.warning(f"[git] backup error: {exc}")
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
