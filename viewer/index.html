@@ -313,6 +313,43 @@ async function fetchBrief() {
   } catch {}
 }
 
+// Build a clone of a geometry with smooth (position-averaged) normals.
+// Works on both indexed and non-indexed geometries.
+function buildSmoothGeo(geo) {
+  const g = geo.clone();
+  const pos = g.attributes.position;
+  const n = pos.count;
+  const accum = new Map();
+  const key = (x, y, z) =>
+    `${Math.round(x * 1e4)},${Math.round(y * 1e4)},${Math.round(z * 1e4)}`;
+  const getIdx = g.index ? (t, e) => g.index.getX(t * 3 + e) : (t, e) => t * 3 + e;
+  const nFaces = g.index ? Math.round(g.index.count / 3) : Math.floor(n / 3);
+  for (let f = 0; f < nFaces; f++) {
+    const i0=getIdx(f,0), i1=getIdx(f,1), i2=getIdx(f,2);
+    const ax=pos.getX(i0), ay=pos.getY(i0), az=pos.getZ(i0);
+    const bx=pos.getX(i1), by=pos.getY(i1), bz=pos.getZ(i1);
+    const cx=pos.getX(i2), cy=pos.getY(i2), cz=pos.getZ(i2);
+    const fnx=(by-ay)*(cz-az)-(bz-az)*(cy-ay);
+    const fny=(bz-az)*(cx-ax)-(bx-ax)*(cz-az);
+    const fnz=(bx-ax)*(cy-ay)-(by-ay)*(cx-ax);
+    for (const i of [i0, i1, i2]) {
+      const k = key(pos.getX(i), pos.getY(i), pos.getZ(i));
+      const a = accum.get(k) || [0,0,0];
+      a[0]+=fnx; a[1]+=fny; a[2]+=fnz;
+      accum.set(k, a);
+    }
+  }
+  const nrm = g.attributes.normal;
+  for (let i = 0; i < n; i++) {
+    const k = key(pos.getX(i), pos.getY(i), pos.getZ(i));
+    const [nx,ny,nz] = accum.get(k) || [0,1,0];
+    const len = Math.sqrt(nx*nx+ny*ny+nz*nz) || 1;
+    nrm.setXYZ(i, nx/len, ny/len, nz/len);
+  }
+  nrm.needsUpdate = true;
+  return g;
+}
+
 async function swapAsset(url) {
   const obj = await loadAsset(url);
   if (!obj) return;
@@ -323,6 +360,8 @@ async function swapAsset(url) {
     if (child.isMesh) {
       child.castShadow = true;
       child.receiveShadow = true;
+      child._flatGeo   = child.geometry;
+      child._smoothGeo = buildSmoothGeo(child.geometry);
     }
   });
   scene.add(obj);
@@ -585,6 +624,12 @@ function applyStyle(style) {
     const assetName = getCurrentAssetName();
     currentAssetObj.traverse(child => {
       if (!child.isMesh) return;
+
+      // Swap to smooth geometry for Smooth/Realistic, flat geometry for Flat/Wire
+      const useSmooth = style === 'smooth' || style === 'realistic';
+      if (useSmooth && child._smoothGeo) child.geometry = child._smoothGeo;
+      else if (!useSmooth && child._flatGeo) child.geometry = child._flatGeo;
+
       if (style === 'realistic') {
         if (!_origMats.has(child)) _origMats.set(child, child.material);
         child.material = buildRealisticMaterial(assetName);
@@ -593,7 +638,7 @@ function applyStyle(style) {
         const mats = Array.isArray(child.material) ? child.material : [child.material];
         mats.forEach(m => {
           m.wireframe   = style === 'wire';
-          m.flatShading = style === 'flat';
+          m.flatShading = false; // normals already match the mode via geometry swap
           m.needsUpdate = true;
         });
       }
