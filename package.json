@@ -1,0 +1,14 @@
+{
+  "name": "threejs-loop",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Autonomous Three.js game asset generator",
+  "scripts": {
+    "validate": "node headless/validate_geometry.mjs",
+    "render": "node headless/render_scene.mjs"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0",
+    "three": "^0.170.0"
+  }
+}

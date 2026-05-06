@@ -1,0 +1,19 @@
+{
+  "style": "low-poly stylised game asset",
+  "render_style": "low-poly",
+  "texture_style": "vertex-color",
+  "target_game": "fantasy RPG with a Three.js/Vite renderer",
+  "poly_target": "300–800 triangles — enough surface detail to read well from game camera distance, not so many that it is expensive",
+  "material_style": "MeshStandardMaterial with roughness 0.75–0.95, low metalness (0.0–0.05) unless the asset is metal or crystal",
+  "size_reference": "asset should fit inside a 2×2×2 unit bounding box",
+  "emissive": false,
+  "technique_notes": [
+    "LOW-POLY STYLE: prefer IcosahedronGeometry(r, 1–3) or custom BufferGeometry — keep faces faceted, avoid over-subdivision",
+    "For faceted low-poly look: call geometry.computeVertexNormals() OR leave normals as flat face normals — do NOT smooth if targeting low-poly style",
+    "UV coordinates are required — use spherical projection for round shapes, box projection for blocky shapes",
+    "Vertex color painting is REQUIRED for organic assets (rock, tree, wood, dirt) — add per-vertex RGB variation using FBM noise evaluated at each vertex 3D position. Pattern: geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3)); material.vertexColors = true;",
+    "Vertex colors must be computed from the vertex's 3D position (not UV or buffer index) so they are seam-free and survive mergeVertices(). Use a small hash-based noise function seeded by vertex XYZ.",
+    "Slight vertex displacement (amplitude 0.05–0.12) adds organic character without increasing face count",
+    "Set roughness and metalness explicitly on every material — never leave as default (0.5/0.5)"
+  ]
+}

@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>threejs_loop viewer</title>
+<link rel="icon" href="data:,">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; overflow: hidden; font-family: 'Courier New', monospace; color: #ccd; }
+  #c { display: block; width: 100vw; height: 100vh; }
+
+  #overlay {
+    position: fixed; bottom: 16px; left: 16px;
+    background: rgba(10,10,24,0.82); border: 1px solid #334466;
+    border-radius: 6px; padding: 12px 16px; min-width: 240px;
+    font-size: 12px; line-height: 1.7;
+    pointer-events: none;
+  }
+  #overlay .label { color: #7788aa; }
+  #overlay .val   { color: #eef; }
+  #overlay .pass  { color: #4dfa90; font-weight: bold; }
+  #overlay .fail  { color: #fa6060; }
+  #overlay .warn  { color: #facc60; }
+
+  #asset-name {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    background: rgba(10,10,24,0.75); border: 1px solid #334466;
+    border-radius: 4px; padding: 6px 18px; font-size: 13px; color: #99b;
+    pointer-events: none;
+  }
+
+  #reload-flash {
+    position: fixed; top: 16px; right: 16px;
+    background: #4dfa9030; border: 1px solid #4dfa90;
+    border-radius: 4px; padding: 4px 12px; font-size: 11px; color: #4dfa90;
+    opacity: 0; transition: opacity 0.4s;
+    pointer-events: none;
+  }
+  #reload-flash.show { opacity: 1; }
+
+  #help {
+    position: fixed; bottom: 16px; right: 16px;
+    font-size: 10px; color: #445; line-height: 1.6;
+    pointer-events: none;
+  }
+
+  /* ── Asset switcher ─────────────────────────────────────── */
+  #switcher {
+    position: fixed; top: 16px; right: 16px;
+    background: rgba(10,10,24,0.82); border: 1px solid #334466;
+    border-radius: 6px; padding: 8px 10px; font-size: 11px;
+    max-height: 80vh; overflow-y: auto; min-width: 140px;
+  }
+  #switcher .sw-group { margin-bottom: 8px; }
+  #switcher .sw-group:last-child { margin-bottom: 0; }
+  #switcher .sw-name {
+    color: #7788aa; font-size: 10px; letter-spacing: 0.05em;
+    text-transform: uppercase; margin-bottom: 4px;
+  }
+  #switcher .sw-versions { display: flex; flex-wrap: wrap; gap: 4px; }
+  #switcher .sw-btn {
+    background: rgba(51,68,102,0.4); border: 1px solid #334466;
+    border-radius: 3px; padding: 2px 7px; color: #99b; cursor: pointer;
+    font-family: 'Courier New', monospace; font-size: 11px;
+    transition: background 0.15s, color 0.15s;
+  }
+  #switcher .sw-btn:hover  { background: rgba(77,102,153,0.5); color: #eef; }
+  #switcher .sw-btn.active { background: #334466; color: #fff; border-color: #556688; }
+  #switcher .sw-btn.dist   { color: #4dfa90; border-color: #2a6644; }
+  #switcher .sw-btn.dist.active { background: #1a4433; }
+
+  /* ── Style switcher ─────────────────────────────────────── */
+  #style-bar {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: rgba(10,10,24,0.82); border: 1px solid #334466;
+    border-radius: 6px; padding: 4px 6px;
+    display: flex; gap: 4px;
+  }
+  #style-bar .st-btn {
+    background: rgba(51,68,102,0.4); border: 1px solid #334466;
+    border-radius: 3px; padding: 3px 10px; color: #99b; cursor: pointer;
+    font-family: 'Courier New', monospace; font-size: 11px;
+    transition: background 0.15s, color 0.15s;
+  }
+  #style-bar .st-btn:hover  { background: rgba(77,102,153,0.5); color: #eef; }
+  #style-bar .st-btn.active { background: #334466; color: #fff; border-color: #556688; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three":                                                "/node_modules/three/build/three.module.js",
+    "three/addons/":                                        "/node_modules/three/examples/jsm/",
+    "three/examples/jsm/utils/BufferGeometryUtils.js":      "/node_modules/three/examples/jsm/utils/BufferGeometryUtils.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="asset-name">loading…</div>
+<div id="reload-flash">↺ new version loaded</div>
+<div id="overlay">
+  <div><span class="label">asset   </span><span class="val" id="s-asset">—</span></div>
+  <div><span class="label">version </span><span class="val" id="s-version">—</span></div>
+  <div><span class="label">iter    </span><span class="val" id="s-iter">—</span></div>
+  <div><span class="label">score   </span><span class="val" id="s-score">—</span></div>
+  <div><span class="label">tris    </span><span class="val" id="s-tris">—</span></div>
+  <div><span class="label">normals </span><span class="val" id="s-normals">—</span></div>
+  <div><span class="label">uvs     </span><span class="val" id="s-uvs">—</span></div>
+  <div><span class="label">coverage</span><span class="val" id="s-cov">—</span></div>
+  <div><span class="label">status  </span><span class="val" id="s-status">—</span></div>
+</div>
+<div id="switcher"></div>
+<div id="style-bar"></div>
+<div id="help">
+  drag — orbit &nbsp;|&nbsp; scroll — zoom &nbsp;|&nbsp; right-drag — pan<br>
+  auto-reloads when loop writes a new version
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Constants matching render_scene.mjs ───────────────────────────────────────
+const BG_COLOR      = 0x1a1a2e;
+const SUN_COLOR     = 0xfff5e0;
+const SUN_INTENSITY = 2.2;
+const FILL_COLOR    = 0x4466cc;
+const FILL_INTENSITY = 0.25;
+const AMB_COLOR     = 0x8899bb;
+const AMB_INTENSITY = 0.20;
+const PASS_THRESHOLD = 0.92;
+
+// ── Renderer + scene setup ────────────────────────────────────────────────────
+const canvas   = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(BG_COLOR);
+
+const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 1000);
+camera.position.set(2.5, 2.0, 2.5);
+camera.lookAt(0, 0.5, 0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.5, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+// Lighting — identical to render_scene.mjs
+const sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY);
+sun.position.set(5, 10, 5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(FILL_COLOR, FILL_INTENSITY);
+fill.position.set(-4, 2, -3);
+scene.add(fill);
+
+const ambLight = new THREE.AmbientLight(AMB_COLOR, AMB_INTENSITY);
+scene.add(ambLight);
+
+// IBL sky environment — lazy-inited on first realistic-mode activation
+let _skyEnv = null;
+let _pmrem  = null;
+
+function getSkyEnv() {
+  if (_skyEnv) return _skyEnv;
+  _pmrem = _pmrem || new THREE.PMREMGenerator(renderer);
+  _pmrem.compileEquirectangularShader();
+
+  // 16×8 equirectangular gradient: sky-blue zenith → warm hazy horizon → warm ground nadir
+  const W = 16, H = 8;
+  const rows = [
+    [95, 160, 215],  // zenith — deep sky blue
+    [120,185,230],   // upper sky
+    [155,210,240],   // mid sky
+    [185,220,240],   // horizon sky
+    [200,210,195],   // horizon haze
+    [175,160,130],   // upper ground
+    [140,125,100],   // mid ground
+    [100, 88, 68],   // nadir
+  ];
+  const data = new Uint8Array(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const [r,g,b] = rows[y];
+    for (let x = 0; x < W; x++) {
+      const i = (y*W+x)*4;
+      data[i]=r; data[i+1]=g; data[i+2]=b; data[i+3]=255;
+    }
+  }
+  const equirect = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  equirect.mapping = THREE.EquirectangularReflectionMapping;
+  equirect.colorSpace = THREE.LinearSRGBColorSpace;
+  equirect.needsUpdate = true;
+
+  _skyEnv = _pmrem.fromEquirectangular(equirect).texture;
+  equirect.dispose();
+  return _skyEnv;
+}
+
+// Shadow floor + grid
+const shadowMat = new THREE.ShadowMaterial({ opacity: 0.18 });
+const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), shadowMat);
+floorMesh.rotation.x = -Math.PI / 2;
+floorMesh.receiveShadow = true;
+scene.add(floorMesh);
+const grid = new THREE.GridHelper(6, 12, 0x334466, 0x223355);
+scene.add(grid);
+
+// Realistic ground material — lazy-built, same onBeforeCompile FBM approach as asset texture
+let _groundMat = null;
+function buildGroundMaterial() {
+  if (_groundMat) return _groundMat;
+  // Warm dirt/stone palette: dark soil → mid earth → sandy top
+  const [p0,p1,p2,p3,p4,p5] = ['vec3(.10,.08,.05)','vec3(.25,.20,.13)','vec3(.42,.34,.22)','vec3(.56,.47,.32)','vec3(.68,.58,.42)','vec3(.78,.68,.52)'];
+
+  const glsl = `
+varying vec3 vWPos;
+float _h3g(vec3 p){p=fract(p*vec3(443.897,397.297,491.187));p+=dot(p.zxy,p.yxz+19.19);return fract(p.x*p.y*p.z);}
+float _n3g(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(mix(_h3g(i),_h3g(i+vec3(1,0,0)),f.x),mix(_h3g(i+vec3(0,1,0)),_h3g(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(_h3g(i+vec3(0,0,1)),_h3g(i+vec3(1,0,1)),f.x),mix(_h3g(i+vec3(0,1,1)),_h3g(i+vec3(1,1,1)),f.x),f.y),f.z);}
+float _fbmg(vec3 p){float v=0.,a=.5;for(int k=0;k<5;k++){v+=a*_n3g(p);a*=.5;p*=2.1;}return v;}
+float _groundGray(vec3 wp){
+  float n1=_fbmg(wp*1.4),n2=_fbmg(wp*1.4+vec3(1.5*n1,0.,0.8*n1));
+  return clamp(n2*.8+_n3g(wp*8.)*.12+.08,0.,1.);
+}
+vec3 _groundPal(float t){
+  t=clamp(t,0.,1.);
+  if(t<.2) return mix(${p0},${p1},t*5.);
+  if(t<.4) return mix(${p1},${p2},(t-.2)*5.);
+  if(t<.6) return mix(${p2},${p3},(t-.4)*5.);
+  if(t<.8) return mix(${p3},${p4},(t-.6)*5.);
+  return mix(${p4},${p5},(t-.8)*5.);
+}`;
+
+  _groundMat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0.0 });
+  _groundMat.onBeforeCompile = shader => {
+    shader.vertexShader = 'varying vec3 vWPos;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\nvWPos=(modelMatrix*vec4(position,1.)).xyz;'
+    );
+    shader.fragmentShader = glsl + '\n' + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      '{diffuseColor.rgb*=_groundPal(_groundGray(vWPos));}'
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <roughnessmap_fragment>',
+      'float roughnessFactor=roughness*(.85+_n3g(vWPos*6.)*.15);'
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <normal_fragment_maps>',
+      `{float _e=0.04;
+        float _gx=_groundGray(vWPos+vec3(_e,0,0))-_groundGray(vWPos-vec3(_e,0,0));
+        float _gz=_groundGray(vWPos+vec3(0,0,_e))-_groundGray(vWPos-vec3(0,0,_e));
+        vec3 _g=vec3(_gx,0.,_gz);
+        normal=normalize(normal+0.18*(_g-dot(_g,normal)*normal));}`
+    );
+  };
+  _groundMat.customProgramCacheKey = () => 'realistic-ground';
+  return _groundMat;
+}
+
+// ── Asset loading ─────────────────────────────────────────────────────────────
+let currentAssetObj = null;
+
+function centreAsset(obj) {
+  const box     = new THREE.Box3().setFromObject(obj);
+  const boxCtr  = box.getCenter(new THREE.Vector3());
+  const boxSize = box.getSize(new THREE.Vector3());
+  const maxDim  = Math.max(boxSize.x, boxSize.y, boxSize.z);
+  if (maxDim > 0.001) {
+    const s = 2.0 / maxDim;
+    obj.scale.setScalar(s);
+    obj.position.sub(boxCtr.clone().multiplyScalar(s));
+    obj.position.y += boxSize.y * s * 0.5;
+  }
+}
+
+async function loadAsset(url) {
+  try {
+    // Cache-bust so re-import picks up the new file
+    const mod = await import(url + '?t=' + Date.now());
+    if (typeof mod.createAsset !== 'function') {
+      console.error('createAsset not exported from', url);
+      return null;
+    }
+    return mod.createAsset();
+  } catch (e) {
+    console.error('Failed to load asset:', e.message);
+    return null;
+  }
+}
+
+let renderStyle  = 'default';
+let viewerStyle  = 'flat'; // 'flat' | 'smooth' | 'wire' | 'realistic'
+
+async function fetchBrief() {
+  try {
+    const r = await fetch('/brief.json?t=' + Date.now());
+    if (r.ok) {
+      const b = await r.json();
+      renderStyle = b.render_style || 'default';
+      viewerStyle = renderStyle === 'low-poly' ? 'flat' : 'smooth';
+    }
+  } catch {}
+}
+
+async function swapAsset(url) {
+  const obj = await loadAsset(url);
+  if (!obj) return;
+
+  if (currentAssetObj) scene.remove(currentAssetObj);
+  centreAsset(obj);
+  obj.traverse(child => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+  scene.add(obj);
+  currentAssetObj = obj;
+  applyStyle(viewerStyle);
+}
+
+// ── State / overlay ───────────────────────────────────────────────────────────
+function set(id, text, cls) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = cls || 'val';
+}
+
+async function fetchState() {
+  try {
+    const r = await fetch('/loop_state.json?t=' + Date.now());
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function fetchLatestMetrics(assetName, version) {
+  try {
+    // Find newest metrics file for this version
+    const r = await fetch(`/metrics/?list=1&t=${Date.now()}`);
+    // SimpleHTTPRequestHandler returns directory listing HTML — parse it
+    const html = await r.text();
+    const prefix = `${assetName}_${version}_`;
+    const matches = [...html.matchAll(/href="([^"]*\.json)"/g)]
+      .map(m => m[1])
+      .filter(f => f.startsWith(prefix))
+      .sort();
+    if (!matches.length) return null;
+    const latest = matches[matches.length - 1];
+    const mr = await fetch(`/metrics/${latest}?t=` + Date.now());
+    return await mr.json();
+  } catch { return null; }
+}
+
+let lastVersion = null;
+let currentAssetUrl = null;
+
+// Initial load: prefer ?asset= query param, else use loop_state.json
+const params  = new URLSearchParams(location.search);
+let pinnedAsset = params.get('asset'); // cleared if file not found — falls back to loop state
+
+async function init() {
+  if (pinnedAsset) {
+    currentAssetUrl = '/' + pinnedAsset;
+    document.getElementById('asset-name').textContent = pinnedAsset;
+    await swapAsset(currentAssetUrl);
+    if (!currentAssetObj) pinnedAsset = null; // file missing — fall back to loop state
+  }
+  await pollState();
+}
+
+function parsePinned(path) {
+  if (!path) return null;
+  const dist = path.match(/^dist\/(.+)\.mjs$/);
+  if (dist) return { name: dist[1], version: 'dist' };
+  const cand = path.match(/^candidates\/(.+)_(v\d+)\.mjs$/);
+  if (cand) return { name: cand[1], version: cand[2] };
+  return null;
+}
+
+async function pollState() {
+  const state = await fetchState();
+  if (!state) {
+    if (!pinnedAsset) document.getElementById('asset-name').textContent = 'no loop_state.json found';
+    return;
+  }
+
+  const loopVersion = state.current_version || state.best_version || 'v1';
+  const loopName    = state.asset_name || 'unknown';
+
+  // When a specific candidate is pinned, show ITS data — not the loop's current best
+  const pinned  = parsePinned(pinnedAsset);
+  const dispName    = pinned ? pinned.name    : loopName;
+  const dispVersion = pinned ? pinned.version : loopVersion;
+
+  // Score: look up pinned version in history; fall back to loop best for dist/unpinned
+  let dispScore = state.best_score;
+  if (pinned && pinned.version !== 'dist') {
+    const entry = (state.history || []).find(h => h.version === pinned.version);
+    dispScore = entry ? entry.score : null;
+  }
+
+  set('s-asset',   dispName);
+  set('s-version', dispVersion);
+  set('s-iter',    `${state.iteration} / 30`);
+  set('s-score',   dispScore != null ? dispScore.toFixed(3) : '—');
+
+  const scoreEl = document.getElementById('s-score');
+  const bs = dispScore || 0;
+  scoreEl.className = bs >= PASS_THRESHOLD ? 'pass' : bs >= 0.80 ? 'warn' : 'fail';
+
+  const status = state.done ? 'DONE ✓' : `iterating (trust ${(state.trust_score || 50).toFixed(0)}/100)`;
+  set('s-status', status, state.done ? 'pass' : 'val');
+
+  if (!pinnedAsset) {
+    document.getElementById('asset-name').textContent =
+      `${loopName} — ${loopVersion}  (iter ${state.iteration})`;
+  }
+
+  // Fetch metrics for the DISPLAYED version, not necessarily the loop's current version
+  const metricsVersion = pinned && pinned.version !== 'dist' ? pinned.version : loopVersion;
+  const metricsName    = dispName;
+  const metrics = await fetchLatestMetrics(metricsName, metricsVersion);
+  if (metrics) {
+    const geo = metrics.geometry || {};
+    const an  = metrics.screenshot_analysis || {};
+    set('s-tris',    geo.triangle_count ?? '—');
+    set('s-normals', geo.has_normals ? 'yes' : 'NO', geo.has_normals ? 'pass' : 'fail');
+    set('s-uvs',     geo.has_uvs ? 'yes' : 'NO',     geo.has_uvs ? 'pass' : 'fail');
+    const cov = an.coverage != null ? (an.coverage * 100).toFixed(1) + '%' : '—';
+    set('s-cov', cov);
+  }
+
+  // Swap asset only when not pinned and loop version changed
+  const loopUrl = `/candidates/${loopName}_${loopVersion}.mjs`;
+  if (!pinnedAsset && loopVersion !== lastVersion) {
+    lastVersion = loopVersion;
+    currentAssetUrl = loopUrl;
+    await swapAsset(loopUrl);
+    const flash = document.getElementById('reload-flash');
+    flash.classList.add('show');
+    setTimeout(() => flash.classList.remove('show'), 1800);
+  }
+}
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Style switcher ────────────────────────────────────────────────────────────
+
+function getCurrentAssetName() {
+  const p = parsePinned(pinnedAsset);
+  if (p) return p.name;
+  let m = (currentAssetUrl || '').match(/\/candidates\/([^_]+)_v\d+\.mjs/);
+  if (m) return m[1];
+  m = (currentAssetUrl || '').match(/\/dist\/(.+)\.mjs/);
+  return m ? m[1] : 'unknown';
+}
+
+// GLSL world-position procedural material — no UV seam, asset-type-aware.
+// onBeforeCompile injects FBM noise into the MeshStandardMaterial PBR shader,
+// sampling world position (3D) instead of UV so the back-of-sphere seam never appears.
+// Cached per type so the shader compiles only once.
+const _realisticMats = {};
+
+function buildRealisticMaterial(assetName) {
+  const t = (assetName || '').toLowerCase();
+  let type;
+  if      (/rock|stone|boulder|gravel|pebble/.test(t)) type = 'granite';
+  else if (/tree|wood|log|bark|branch/.test(t))        type = 'bark';
+  else if (/metal|barrel|iron|steel|ore|coin|armou?r/.test(t)) type = 'metal';
+  else                                                  type = 'stone';
+
+  if (_realisticMats[type]) return _realisticMats[type];
+
+  const cfgs = {
+    granite: { pal: ['vec3(.150,.125,.094)','vec3(.306,.267,.216)','vec3(.541,.478,.408)','vec3(.659,.596,.518)','vec3(.765,.714,.643)','vec3(.867,.827,.773)'], ax:1.00,ay:1.00,az:1.00, sc:3.5, rough:0.88, metal:0.02, bStr:0.50 },
+    bark:    { pal: ['vec3(.090,.055,.025)','vec3(.220,.130,.060)','vec3(.380,.240,.120)','vec3(.520,.340,.175)','vec3(.620,.440,.225)','vec3(.720,.540,.285)'], ax:0.25,ay:2.50,az:0.25, sc:4.0, rough:0.92, metal:0.02, bStr:0.60 },
+    metal:   { pal: ['vec3(.140,.130,.130)','vec3(.280,.260,.250)','vec3(.440,.420,.400)','vec3(.580,.560,.530)','vec3(.700,.680,.650)','vec3(.820,.800,.770)'], ax:1.00,ay:1.00,az:1.00, sc:2.0, rough:0.30, metal:0.72, bStr:0.12 },
+    stone:   { pal: ['vec3(.180,.160,.140)','vec3(.350,.320,.280)','vec3(.520,.480,.430)','vec3(.640,.600,.540)','vec3(.740,.700,.640)','vec3(.840,.810,.750)'], ax:1.00,ay:1.00,az:1.00, sc:3.0, rough:0.85, metal:0.02, bStr:0.42 },
+  };
+  const cfg = cfgs[type];
+  const [p0,p1,p2,p3,p4,p5] = cfg.pal;
+  const sc    = cfg.sc.toFixed(1);
+  const scHi  = (cfg.sc * 4.8).toFixed(1);
+  const scRgh = (cfg.sc * 2.2).toFixed(1);
+  const bStr  = cfg.bStr.toFixed(2);
+
+  // GLSL injected into fragment shader preamble — world-pos FBM + bump via 3D gradient
+  const glsl = `
+varying vec3 vWPos;
+float _h3(vec3 p){p=fract(p*vec3(443.897,397.297,491.187));p+=dot(p.zxy,p.yxz+19.19);return fract(p.x*p.y*p.z);}
+float _n3(vec3 p){
+  vec3 i=floor(p),f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(mix(_h3(i),_h3(i+vec3(1,0,0)),f.x),mix(_h3(i+vec3(0,1,0)),_h3(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(_h3(i+vec3(0,0,1)),_h3(i+vec3(1,0,1)),f.x),mix(_h3(i+vec3(0,1,1)),_h3(i+vec3(1,1,1)),f.x),f.y),f.z);}
+float _fbm(vec3 p){float v=0.,a=.5;for(int k=0;k<7;k++){v+=a*_n3(p);a*=.5;p*=2.07;}return v;}
+vec3 _pal(float t){
+  t=clamp(t,0.,1.);
+  if(t<.2) return mix(${p0},${p1},t*5.);
+  if(t<.4) return mix(${p1},${p2},(t-.2)*5.);
+  if(t<.6) return mix(${p2},${p3},(t-.4)*5.);
+  if(t<.8) return mix(${p3},${p4},(t-.6)*5.);
+  return mix(${p4},${p5},(t-.8)*5.);
+}
+// Scalar version of the noise field — used by bump gradient
+float _gray(vec3 wp){
+  vec3 p=wp*vec3(${cfg.ax.toFixed(2)},${cfg.ay.toFixed(2)},${cfg.az.toFixed(2)})*${sc};
+  float n1=_fbm(p), n2=_fbm(p+vec3(1.7*n1,0.9*n1,0.3*n1));
+  return clamp(n2*.82+_n3(wp*${scHi})*.12+.06,0.,1.);
+}
+vec3 assetTex(vec3 wp){ return _pal(_gray(wp)); }`;
+
+  const mat = new THREE.MeshStandardMaterial({
+    roughness: cfg.rough, metalness: cfg.metal, flatShading: false,
+  });
+
+  mat.onBeforeCompile = shader => {
+    // Vertex: pass world position to fragment
+    shader.vertexShader = 'varying vec3 vWPos;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\nvWPos=(modelMatrix*vec4(position,1.)).xyz;'
+    );
+    // Fragment: inject noise/palette helpers + replace map/roughness/normal chunks
+    shader.fragmentShader = glsl + '\n' + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      '{diffuseColor.rgb*=assetTex(vWPos);}'
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <roughnessmap_fragment>',
+      `float roughnessFactor=roughness*(.72+_n3(vWPos*${scRgh})*.32);`
+    );
+    // Bump: 3D FBM gradient via 6-sample finite differences in world space.
+    // Project gradient onto tangent plane (subtract normal component) then blend.
+    // eps=0.018 gives ~0.063 texture-space step at sc=3.5 — captures FBM mid-frequency detail.
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <normal_fragment_maps>',
+      `{float _e=0.018;
+        float _gx=_gray(vWPos+vec3(_e,0,0))-_gray(vWPos-vec3(_e,0,0));
+        float _gy=_gray(vWPos+vec3(0,_e,0))-_gray(vWPos-vec3(0,_e,0));
+        float _gz=_gray(vWPos+vec3(0,0,_e))-_gray(vWPos-vec3(0,0,_e));
+        vec3 _g=vec3(_gx,_gy,_gz);
+        normal=normalize(normal+${bStr}*(_g-dot(_g,normal)*normal));}`
+    );
+  };
+  mat.customProgramCacheKey = () => `realistic-${type}`;
+  _realisticMats[type] = mat;
+  return mat;
+}
+
+const _origMats = new WeakMap();
+
+function applyStyle(style) {
+  viewerStyle = style;
+
+  if (currentAssetObj) {
+    const assetName = getCurrentAssetName();
+    currentAssetObj.traverse(child => {
+      if (!child.isMesh) return;
+      if (style === 'realistic') {
+        if (!_origMats.has(child)) _origMats.set(child, child.material);
+        child.material = buildRealisticMaterial(assetName);
+      } else {
+        if (_origMats.has(child)) child.material = _origMats.get(child);
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach(m => {
+          m.wireframe   = style === 'wire';
+          m.flatShading = style === 'flat';
+          m.needsUpdate = true;
+        });
+      }
+    });
+  }
+
+  if (style === 'realistic') {
+    sun.color.set(0xfff8f0);  sun.intensity      = 1.6;
+    fill.color.set(0x88aacc); fill.intensity     = 0.40;
+    ambLight.color.set(0xaabccc); ambLight.intensity = 0.20;
+    scene.environment    = getSkyEnv();
+    scene.background     = new THREE.Color(0x8fa0af);
+    floorMesh.material   = buildGroundMaterial();
+    floorMesh.receiveShadow = true;
+    grid.visible         = false;
+  } else {
+    sun.color.set(SUN_COLOR);  sun.intensity      = SUN_INTENSITY;
+    fill.color.set(FILL_COLOR); fill.intensity    = FILL_INTENSITY;
+    ambLight.color.set(AMB_COLOR); ambLight.intensity = AMB_INTENSITY;
+    scene.environment    = null;
+    scene.background     = new THREE.Color(BG_COLOR);
+    floorMesh.material   = shadowMat;
+    grid.visible         = true;
+  }
+
+  renderStyleBar();
+}
+
+function renderStyleBar() {
+  const bar = document.getElementById('style-bar');
+  bar.textContent = '';
+  for (const {id, label} of [{id:'flat',label:'Flat'},{id:'smooth',label:'Smooth'},{id:'wire',label:'Wire'},{id:'realistic',label:'Realistic'}]) {
+    const btn = document.createElement('button');
+    btn.className = 'st-btn' + (viewerStyle === id ? ' active' : '');
+    btn.textContent = label;
+    btn.addEventListener('click', () => applyStyle(id));
+    bar.appendChild(btn);
+  }
+}
+
+// ── Asset switcher ────────────────────────────────────────────────────────────
+async function fetchAssets() {
+  try {
+    const r = await fetch('/api/assets?t=' + Date.now());
+    return r.ok ? await r.json() : [];
+  } catch { return []; }
+}
+
+function renderSwitcher(assets) {
+  const el = document.getElementById('switcher');
+  if (!assets.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  const groups = {};
+  for (const a of assets) {
+    if (!groups[a.name]) groups[a.name] = [];
+    groups[a.name].push(a);
+  }
+
+  el.textContent = '';
+  for (const [name, items] of Object.entries(groups)) {
+    const group = document.createElement('div');
+    group.className = 'sw-group';
+
+    const label = document.createElement('div');
+    label.className = 'sw-name';
+    label.textContent = name;
+    group.appendChild(label);
+
+    const row = document.createElement('div');
+    row.className = 'sw-versions';
+
+    for (const a of items) {
+      const isActive = ('/' + a.path) === currentAssetUrl;
+      const btn = document.createElement('button');
+      btn.className = 'sw-btn' + (a.type === 'dist' ? ' dist' : '') + (isActive ? ' active' : '');
+      btn.textContent = a.version;
+      btn.addEventListener('click', async () => {
+        pinnedAsset = a.path;
+        currentAssetUrl = '/' + a.path;
+        document.getElementById('asset-name').textContent = a.path;
+        await swapAsset(currentAssetUrl);
+        renderSwitcher(assets);
+        await pollState();
+      });
+      row.appendChild(btn);
+    }
+    group.appendChild(row);
+    el.appendChild(group);
+  }
+}
+
+let cachedAssets = [];
+async function refreshSwitcher() {
+  cachedAssets = await fetchAssets();
+  renderSwitcher(cachedAssets);
+}
+
+// ── Poll for updates ──────────────────────────────────────────────────────────
+await fetchBrief();
+await init();
+renderStyleBar();
+await refreshSwitcher();
+setInterval(pollState, 3000);
+setInterval(refreshSwitcher, 5000);
+</script>
+</body>
+</html>
