@@ -8,5 +8,15 @@
     "triangle_count": 320,
     "has_normals": true,
     "has_uvs": true
+  },
+  {
+    "asset_name": "boab_tree",
+    "version": "v4",
+    "score": 1.0,
+    "timestamp": "2026-05-06T22:01:35.106574",
+    "description": "a boab tree: massive bottle-shaped grey trunk that swells wide at mid-height and tapers at base and top, short stubby branches spreading outward near the crown, small clusters of leaves at branch tips, smooth pale grey bark with subtle texture variation",
+    "triangle_count": 768,
+    "has_normals": true,
+    "has_uvs": true
   }
 ]
