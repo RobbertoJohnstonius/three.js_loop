@@ -1,0 +1,10 @@
+{
+  "asset_name": "rock",
+  "version": "v6",
+  "score": 1.0,
+  "timestamp": "2026-05-06T20:24:08.275274",
+  "description": "A rough granite boulder for a low-poly fantasy RPG \u2014 irregular surface, flat base, chunky silhouette",
+  "triangle_count": 320,
+  "has_normals": true,
+  "has_uvs": true
+}
