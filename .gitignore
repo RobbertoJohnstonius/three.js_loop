@@ -10,6 +10,5 @@ daily_tokens.json
 loop_state.json
 *.jsonl
 status.txt
-dist/
 .DS_Store
 graveyard/
