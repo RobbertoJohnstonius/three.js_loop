@@ -624,19 +624,26 @@ OPENROUTER_MODEL_VISION = os.environ.get(
 )
 
 
-def _call_groq_vision(prompt: str, b64: str, timeout: int = 30) -> str:
-    """Send prompt + base64 image to Groq vision. Raises on failure."""
+def _call_groq_vision(
+    prompt: str,
+    b64_a: str,
+    timeout: int = 30,
+    b64_b: str | None = None,
+) -> str:
+    """Send prompt + one or two base64 images to Groq vision. Raises on failure."""
     import requests as req_lib
+    content = []
+    content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_a}"}})
+    if b64_b:
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_b}"}})
+    content.append({"type": "text", "text": prompt})
     r = req_lib.post(
         f"{GROQ_URL}/chat/completions",
         headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
         json={
             "model": GROQ_MODEL_VISION,
             "max_tokens": 1200,
-            "messages": [{"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-                {"type": "text", "text": prompt},
-            ]}],
+            "messages": [{"role": "user", "content": content}],
         },
         timeout=timeout,
     )
@@ -653,10 +660,12 @@ def call_llm_vision(
     model: str | None = None,
     timeout: int = 60,
     json_mode: bool = False,
+    image_path_b=None,          # optional second image for dual-image comparison
 ) -> str:
     """
-    Send prompt + image to vision LLM. Tries Groq first (~6s), falls back to OpenRouter (~24s).
-    image_path: str or Path — PNG/JPEG file on disk.
+    Send prompt + one or two images to vision LLM.
+    Tries Groq first (~6s), falls back to OpenRouter (~24s).
+    image_path / image_path_b: str or Path — PNG/JPEG file on disk.
     Returns response text, or "" on failure.
     """
     import base64
@@ -668,15 +677,23 @@ def call_llm_vision(
         logging.warning(f"call_llm_vision: could not read image {image_path}: {e}")
         return ""
 
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    b64_a = base64.b64encode(image_bytes).decode("utf-8")
+    b64_b: str | None = None
+    if image_path_b is not None:
+        try:
+            b64_b = base64.b64encode(_Path(image_path_b).read_bytes()).decode("utf-8")
+        except Exception as e:
+            logging.warning(f"call_llm_vision: could not read image_path_b {image_path_b}: {e}")
+
     text_block = (_JSON_HEADER + prompt) if json_mode else prompt
+    two_img_tag = " [2-image]" if b64_b else ""
 
     # ── Try Groq first ────────────────────────────────────────────────────────
     if _GROQ_VISION_ENABLED and not model:
         t0 = time.time()
         try:
-            content = _call_groq_vision(text_block, b64, timeout=30)
-            logging.info(f"[vision] groq/{GROQ_MODEL_VISION.split('/')[-1]} ok | {time.time()-t0:.1f}s | {len(content)} chars")
+            content = _call_groq_vision(text_block, b64_a, timeout=30, b64_b=b64_b)
+            logging.info(f"[vision] groq/{GROQ_MODEL_VISION.split('/')[-1]} ok | {time.time()-t0:.1f}s | {len(content)} chars{two_img_tag}")
             if json_mode:
                 try:
                     return _validate_json(content)
@@ -694,13 +711,18 @@ def call_llm_vision(
         return ""
 
     import requests as req_lib
+    content_blocks = [
+        {"type": "text", "text": text_block},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_a}"}},
+    ]
+    if b64_b:
+        content_blocks.append(
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_b}"}}
+        )
     payload = {
         "model": vision_model,
         "max_tokens": 1200,
-        "messages": [{"role": "user", "content": [
-            {"type": "text", "text": text_block},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-        ]}],
+        "messages": [{"role": "user", "content": content_blocks}],
     }
     t0 = time.time()
     try:
@@ -720,7 +742,7 @@ def call_llm_vision(
         if not data.get("choices"):
             raise ValueError(f"OpenRouter vision returned no choices: {str(data)[:200]}")
         content = data["choices"][0]["message"]["content"]
-        logging.info(f"[vision] or/{vision_model.split('/')[-1]} ok | {time.time()-t0:.1f}s | {len(content)} chars")
+        logging.info(f"[vision] or/{vision_model.split('/')[-1]} ok | {time.time()-t0:.1f}s | {len(content)} chars{two_img_tag}")
         if json_mode:
             try:
                 return _validate_json(content)

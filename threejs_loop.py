@@ -25,8 +25,10 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import logging
+import math as _math
 import re
 import shutil
 import sys
@@ -195,6 +197,7 @@ def fresh_state(asset_name: str, asset_description: str) -> dict:
         "done":                   False,
         "trust_score":            50.0,
         "history":                [],
+        "stagnation_count":       0,
     }
 
 # ── Rules (permanent lessons, never rolled) ───────────────────────────────────
@@ -241,6 +244,171 @@ def _brief_block(brief: dict) -> str:
             lines.append(f"  {k}: {v}")
     return "\n".join(lines)
 
+def _camera_basis_block(brief: dict) -> str:
+    cam = brief.get("camera_config")
+    if not cam:
+        return ""
+    pos = cam.get("camera_position", [])
+    tgt = cam.get("camera_target", [])
+    basis = cam.get("camera_basis", {})
+    rules = cam.get("derived_rules", [])
+    lines = [
+        "CAMERA BASIS (world-space → image mapping for this asset):",
+        f"  Camera: position={pos}  target={tgt}",
+    ]
+    for axis, label in basis.items():
+        lines.append(f"  {axis}: {label}")
+    if rules:
+        lines.append("  Derived axis rules:")
+        for r in rules:
+            lines.append(f"    - {r}")
+    return "\n".join(lines)
+
+
+def _check_arrangement(geo: dict, brief: dict) -> None:
+    """Cluster primary mesh positions to check arrangement. Mutates geo in-place."""
+    exp = brief.get("expected_arrangement")
+    if not exp or not geo.get("ok"):
+        return
+    # Support any primary mesh name, not just 'body'
+    primary_name = exp.get("primary_mesh_name", "body")
+    named = geo.get("named_mesh_positions", {})
+    body_positions = named.get(primary_name) or geo.get("body_mesh_positions", [])
+    body_count = len(body_positions)
+    expected_count = exp.get("body_count", 0)
+    expected_rows = exp.get("row_count", 2)
+    expected_per_row = exp.get("bodies_per_row", 3)
+    row_axis = exp.get("row_axis", "y")
+
+    geo["arrangement_body_count"] = body_count
+
+    if body_count == 0:
+        geo["arrangement_ok"] = False
+        geo["arrangement_row_count"] = 0
+        return
+
+    coords = [p.get(row_axis, 0.0) for p in body_positions]
+
+    if expected_rows == 2 and body_count >= 2:
+        median = sorted(coords)[body_count // 2]
+        n_low = sum(1 for c in coords if c < median)
+        n_high = sum(1 for c in coords if c >= median)
+        det_rows = 2 if n_low > 0 and n_high > 0 else 1
+        geo["arrangement_row_count"] = det_rows
+        geo["arrangement_ok"] = (
+            body_count == expected_count
+            and det_rows == expected_rows
+            and abs(n_low - expected_per_row) <= 1
+            and abs(n_high - expected_per_row) <= 1
+        )
+    else:
+        geo["arrangement_row_count"] = 1 if body_count > 0 else 0
+        geo["arrangement_ok"] = body_count == expected_count
+
+    # Cluster density: mean pairwise Euclidean distance between primary mesh centroids
+    if body_count >= 2:
+        capped = body_positions[:50]      # O(n²) capped at 50 objects
+        total_dist, pair_count = 0.0, 0
+        for i in range(len(capped)):
+            for j in range(i + 1, len(capped)):
+                pi, pj = capped[i], capped[j]
+                dx = pi.get("x", 0.0) - pj.get("x", 0.0)
+                dy = pi.get("y", 0.0) - pj.get("y", 0.0)
+                dz = pi.get("z", 0.0) - pj.get("z", 0.0)
+                total_dist += _math.sqrt(dx*dx + dy*dy + dz*dz)
+                pair_count += 1
+        geo["cluster_density_mean"] = round(total_dist / pair_count, 4)
+    else:
+        geo["cluster_density_mean"] = 0.0
+
+
+def _sync_to_dist(asset_name: str, version: str) -> None:
+    """Copy winning candidate to dist/ so viewer stays current."""
+    src = candidate_path(asset_name, version)
+    if src.exists():
+        dst = DIST_DIR / f"{asset_name}.mjs"
+        shutil.copy2(src, dst)
+        log.info(f"[dist] synced {src.name} → {dst.name}")
+
+
+def _auto_calibrate_color(metrics: dict) -> None:
+    """On first accepted iteration, write observed hue stats to brief.json if unset."""
+    brief = load_brief()
+    if brief.get("expected_color_hsv") and not brief["expected_color_hsv"].get("_auto_calibrated"):
+        return
+    pixel_m = (metrics.get("screenshot_analysis") or {}).get("pixel_metrics") or {}
+    dom_hue = pixel_m.get("dominant_hue")
+    mean_sat = pixel_m.get("mean_saturation")
+    hue_var = pixel_m.get("hue_variance", 25)
+    if dom_hue is None:
+        return
+    tol = round(max(20.0, min(60.0, float(hue_var) * 0.9)), 1)
+    brief["expected_color_hsv"] = {
+        "hue_center": round(dom_hue, 1),
+        "hue_tolerance": tol,
+        "saturation_min": round(max(0.0, float(mean_sat or 0.3) * 0.55), 2),
+        "_auto_calibrated": True,
+    }
+    BRIEF_PATH.write_text(json.dumps(brief, indent=2))
+    log.info(f"[auto-calibrate] set expected_color_hsv: hue={dom_hue:.0f}° ±{tol}°")
+
+
+def _auto_append_focus_hint(plan: dict) -> None:
+    """Append the successful planner instruction to steering.json focus_hints."""
+    instruction = plan.get("instruction", "")
+    if not instruction or len(instruction) < 20:
+        return
+    hint = f"PREVIOUSLY SUCCESSFUL ({plan.get('improvement_type', '?')}): {instruction[:130]}"
+    steering = load_steering()
+    hints = steering.get("focus_hints", [])
+    other = [h for h in hints if not h.startswith("PREVIOUSLY SUCCESSFUL")]
+    prev = [h for h in hints if h.startswith("PREVIOUSLY SUCCESSFUL")][-1:]
+    steering["focus_hints"] = other + prev + [hint]
+    STEERING_PATH.write_text(json.dumps(steering, indent=2))
+    log.info(f"[auto-steering] appended hint: {hint[:70]!r}")
+
+
+def _inject_stagnation_recovery(asset_path: Path) -> None:
+    """Inject a geometry-strategy-swap force_plan when score has plateaued."""
+    code = asset_path.read_text() if asset_path.exists() else ""
+    uses_icosahedron = "IcosahedronGeometry" in code
+    uses_custom_buf = "BufferGeometry" in code and "Float32Array" in code
+
+    if uses_icosahedron and not uses_custom_buf:
+        approach = "switch from IcosahedronGeometry to custom BufferGeometry"
+        instruction = (
+            "The current IcosahedronGeometry approach has stagnated — score not improving. "
+            "Rebuild the main shape using a custom BufferGeometry: construct vertex positions "
+            "explicitly with Float32Array, set faces with setIndex(). "
+            "Keep the same visual intent but use a completely different geometry construction."
+        )
+    elif uses_custom_buf:
+        approach = "switch from custom BufferGeometry to Three.js built-in primitives"
+        instruction = (
+            "The custom BufferGeometry approach has stagnated. Rebuild using Three.js built-in "
+            "primitives (SphereGeometry, CylinderGeometry, BoxGeometry) combined as a Group. "
+            "Keep the same visual intent but use a completely different construction strategy."
+        )
+    else:
+        approach = "change geometry construction strategy"
+        instruction = (
+            "The current geometry approach has stagnated. Try a fundamentally different construction: "
+            "if using primitives, switch to custom BufferGeometry; if using custom geometry, "
+            "switch to combining built-in primitives."
+        )
+
+    steering = load_steering()
+    steering["force_plan"] = {
+        "improvement_type": "shape",
+        "title": f"Stagnation recovery: {approach}",
+        "rationale": "Score unchanged for 4+ iterations — geometry strategy change required",
+        "instruction": instruction,
+        "_stagnation_injected": True,
+    }
+    STEERING_PATH.write_text(json.dumps(steering, indent=2))
+    log.info(f"[stagnation] injected force_plan: {approach}")
+
+
 # ── Reference image system ────────────────────────────────────────────────────
 
 def find_reference(asset_name: str) -> Path | None:
@@ -252,20 +420,61 @@ def find_reference(asset_name: str) -> Path | None:
     return None
 
 
-def run_reference_comparison(asset_name: str, ref_path: Path, render_description: str) -> dict:
+def run_reference_comparison(
+    asset_name: str,
+    ref_path: Path,
+    render_description: str,
+    stitched_path: str | None = None,
+) -> dict:
     """
     Compare the current render against a reference image.
-      Step 1 — vision: describe the reference image
-      Step 2 — text LLM: score similarity 0–10 and identify gaps
+    When stitched_path is provided: single dual-image vision call — IMAGE A is the
+    reference photo, IMAGE B is the 4-angle render grid (direct visual comparison).
+    Fallback when stitched_path is absent: describe reference → text LLM compare (legacy).
 
-    Returns {reference_similarity, what_matches, what_to_improve} or {} on failure.
+    Returns {reference_similarity, what_matches, what_to_improve,
+             reference_count_match, reference_critical_gap} or {} on failure.
     """
+    if stitched_path and Path(stitched_path).exists():
+        # ── Direct dual-image comparison (Item 6) ────────────────────────────
+        dual_prompt = (
+            f"You are comparing a reference photo (IMAGE A) to a 3D model render (IMAGE B) "
+            f"of a game asset called \"{asset_name}\".\n"
+            "IMAGE A is the reference (ground truth). "
+            "IMAGE B shows the model from four angles: top-left=quarter, top-right=front, "
+            "bottom-left=right, bottom-right=top-down.\n\n"
+            "Compare them carefully and return ONLY valid JSON:\n"
+            "{\n"
+            '  "reference_similarity": <int 0-10>,\n'
+            '  "what_matches": "<features that look correct>",\n'
+            '  "what_to_improve": "<specific differences — count, shape, connectors, arrangement, colour>",\n'
+            '  "reference_count_match": <bool>,\n'
+            '  "reference_critical_gap": "<one critical structural difference or null>"\n'
+            "}\n\n"
+            "reference_similarity: 10=identical, 7=clearly resembles reference, "
+            "4=vaguely similar, 0=unrelated."
+        )
+        log.info("[reference] dual-image direct comparison")
+        raw_vision = call_llm_vision(
+            dual_prompt, str(ref_path), json_mode=True, image_path_b=stitched_path
+        )
+        result = extract_json(raw_vision) if raw_vision else {}
+        if result:
+            log.info(
+                f"[reference] similarity={result.get('reference_similarity', '?')}/10  "
+                f"count_match={result.get('reference_count_match', '?')}  "
+                f"gap={result.get('reference_critical_gap', 'none')!r:.60}"
+            )
+            return result
+        log.warning("[reference] dual-image parse failed, falling back to legacy mode")
+
+    # ── Legacy: describe reference → text LLM compare ────────────────────────
     describe_ref_prompt = (
         f'Look at this reference image for a 3D game asset called "{asset_name}". '
         "In 3-4 sentences describe the key visual characteristics: shape, proportions, "
         "distinctive features, and colour/material."
     )
-    log.info("[reference] describing reference image")
+    log.info("[reference] describing reference image (legacy mode)")
     ref_description = call_llm_vision(describe_ref_prompt, str(ref_path), json_mode=False)
     if not ref_description:
         return {}
@@ -285,7 +494,9 @@ Return ONLY valid JSON:
 {{
   "reference_similarity": 6,
   "what_matches": "features that look correct",
-  "what_to_improve": "specific differences from reference"
+  "what_to_improve": "specific differences from reference",
+  "reference_count_match": null,
+  "reference_critical_gap": null
 }}
 
 reference_similarity: 10=identical, 7=clearly resembles reference, 4=vaguely similar, 0=unrelated."""
@@ -295,6 +506,105 @@ reference_similarity: 10=identical, 7=clearly resembles reference, 4=vaguely sim
     if result:
         log.info(f"[reference] similarity={result.get('reference_similarity', '?')}/10")
     return result
+
+# ── Reference spec cache ─────────────────────────────────────────────────────
+
+_REF_PASS_PROMPTS = {
+    "count_and_identity": (
+        "You are looking at a reference image for a 3D game asset.\n"
+        "Count exactly how many distinct objects of the primary type are present "
+        "(e.g. balloons, trees, rocks). Do not count background objects.\n"
+        "Answer ONLY with valid JSON:\n"
+        '{"object_type": "...", "object_count": <int>, '
+        '"confidence": "high|medium|low", "notes": "one sentence"}'
+    ),
+    "shape_and_proportions": (
+        "Describe the shape and proportions of the objects in this reference image.\n"
+        "Answer ONLY with valid JSON:\n"
+        '{"overall_shape": "...", "height_to_width_ratio": "e.g. roughly 1:1", '
+        '"silhouette_description": "...", "dominant_axis": "vertical|horizontal|roughly_equal"}'
+    ),
+    "attachment_and_connection": (
+        "How are the objects connected or supported? Look carefully for strings, sticks, "
+        "wires, stems, or other connectors between and below the objects.\n"
+        "Answer ONLY with valid JSON:\n"
+        '{"connector_type": "rigid_stick|flexible_string|stem|none|other", '
+        '"connector_description": "...", "all_at_same_height": <bool>, '
+        '"attachment_point": "top|bottom|side|none"}'
+    ),
+    "spatial_arrangement": (
+        "Describe the spatial arrangement of the objects in this reference image.\n"
+        "Answer ONLY with valid JSON:\n"
+        '{"arrangement_type": "cluster|ring|grid|scattered|single", '
+        '"density": "tightly_packed|moderately_spaced|spread_out", '
+        '"height_variation": "all_same|slight_variation|large_variation", '
+        '"depth_variation": "flat_layer|some_depth|full_3d_cluster"}'
+    ),
+    "surface_and_material": (
+        "Describe the surface finish and material of the objects in this reference image.\n"
+        "Answer ONLY with valid JSON:\n"
+        '{"surface_finish": "matte|satin|glossy|very_glossy", '
+        '"texture_type": "smooth|rough|bumpy|faceted", '
+        '"has_texture_map": <bool>, '
+        '"color_description": "brief list of colors"}'
+    ),
+}
+
+
+def _ref_image_checksum(ref_path: Path) -> str:
+    """First-64KB SHA-256 hex of the reference image — fast change detection."""
+    h = hashlib.sha256()
+    h.update(ref_path.read_bytes()[:65536])
+    return h.hexdigest()[:16]
+
+
+def build_reference_spec(asset_name: str, ref_path: Path) -> dict:
+    """
+    Run five targeted vision passes against the reference image and cache results
+    in brief.json["reference_spec"] keyed by image checksum. Re-runs only when
+    the reference image changes. Also writes derived numeric brief fields:
+      expected_cluster_density_max, expected_silhouette_hw_ratio.
+    """
+    brief = load_brief()
+    current_checksum = _ref_image_checksum(ref_path)
+    existing = brief.get("reference_spec", {})
+    if existing.get("_checksum") == current_checksum and existing.get("count_and_identity"):
+        log.info(f"[ref-spec] cache hit checksum={current_checksum} — skipping vision passes")
+        return existing
+
+    log.info(f"[ref-spec] building reference spec for {asset_name} (ref={ref_path.name})")
+    spec: dict = {"_checksum": current_checksum, "_asset": asset_name}
+    for pass_name, pass_prompt in _REF_PASS_PROMPTS.items():
+        log.info(f"[ref-spec] pass: {pass_name}")
+        raw = call_llm_vision(pass_prompt, str(ref_path), json_mode=True, timeout=45)
+        parsed = extract_json(raw) if raw else None
+        spec[pass_name] = parsed if parsed else {"_raw": (raw or "")[:300]}
+        if parsed:
+            log.info(f"[ref-spec]   → {str(parsed)[:120]}")
+        else:
+            log.warning(f"[ref-spec]   → parse failed")
+
+    # Derive numeric thresholds for brief.json (only write if not already set manually)
+    density_str = (spec.get("spatial_arrangement") or {}).get("density", "")
+    density_map = {"tightly_packed": 0.45, "moderately_spaced": 0.80, "spread_out": 1.50}
+    if density_str in density_map and "expected_cluster_density_max" not in brief:
+        brief["expected_cluster_density_max"] = density_map[density_str]
+        log.info(f"[ref-spec] set expected_cluster_density_max={density_map[density_str]} ({density_str})")
+
+    dominant_axis = (spec.get("shape_and_proportions") or {}).get("dominant_axis", "")
+    hw_map = {
+        "vertical":      {"min": 1.3, "max": 2.5},
+        "horizontal":    {"min": 0.3, "max": 0.75},
+        "roughly_equal": {"min": 0.8, "max": 1.25},
+    }
+    if dominant_axis in hw_map and "expected_silhouette_hw_ratio" not in brief:
+        brief["expected_silhouette_hw_ratio"] = hw_map[dominant_axis]
+        log.info(f"[ref-spec] set expected_silhouette_hw_ratio={hw_map[dominant_axis]} ({dominant_axis})")
+
+    brief["reference_spec"] = spec
+    BRIEF_PATH.write_text(json.dumps(brief, indent=2))
+    log.info(f"[ref-spec] spec written to brief.json")
+    return spec
 
 # ── Version helpers ───────────────────────────────────────────────────────────
 
@@ -363,9 +673,21 @@ def calculate_score(metrics: dict) -> float:
         if color_div > COLOR_DIVERSITY_THRESHOLD:
             score += 0.10
 
-        # Reference similarity earns this bonus when a reference image is provided
-        if (ref_sim is not None and ref_sim >= 7) or coverage > 0.10:
+        # Reference similarity: progressive scoring (Phase 6)
+        if ref_sim is not None and ref_sim >= 5:
+            score += 0.05  # partial match
+        if (ref_sim is not None and ref_sim >= 7) or (ref_sim is None and coverage > 0.10):
+            score += 0.05  # strong match or good coverage fallback
+
+    # Arrangement correctness (Phase 6): bonus when correct, penalty when wrong
+    brief_for_arr = load_brief()
+    exp_arr = brief_for_arr.get("expected_arrangement")
+    arr_ok = geo.get("arrangement_ok")
+    if exp_arr is not None and arr_ok is not None:
+        if arr_ok:
             score += 0.05
+        else:
+            score -= 0.10
 
     # ── Penalties (after main score, before cap) ───────────────────────────
     spike = geo.get("spike_ratio", 0.0)
@@ -424,6 +746,46 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
     critical_failures: list[str] = []
     polish_items:      list[str] = []
 
+    # ── F: Reference Hard Constraints (no pts — critical_failures only) ───────
+    _brief_f = load_brief()
+    _ref_spec = _brief_f.get("reference_spec", {})
+    _ci = _ref_spec.get("count_and_identity", {})
+    _sa = _ref_spec.get("spatial_arrangement", {})
+    _ac = _ref_spec.get("attachment_and_connection", {})
+    _primary_name = _brief_f.get("expected_arrangement", {}).get("primary_mesh_name", "object")
+    _named = geo.get("named_mesh_positions", {})
+    _actual_count = len(_named.get(_primary_name, []))
+
+    _ref_count = _ci.get("object_count")
+    if _ref_count is not None and _actual_count > 0 and _actual_count != _ref_count:
+        _confidence = _ci.get("confidence", "high")
+        _msg = (
+            f"wrong object count: {_actual_count} '{_primary_name}' meshes found, "
+            f"reference shows {_ref_count}. "
+            f"Create exactly {_ref_count} meshes named '{_primary_name}'."
+        )
+        if _confidence in ("high", "medium"):
+            critical_failures.append(_msg)
+        else:
+            polish_items.append(_msg + " (low-confidence count — verify manually)")
+
+    _ref_height_var = _sa.get("height_variation")
+    if _ref_height_var == "all_same" and _actual_count > 1:
+        _positions = _named.get(_primary_name, [])
+        _ys = [p.get("y", 0.0) for p in _positions]
+        if _ys and (max(_ys) - min(_ys)) > 0.10:
+            critical_failures.append(
+                f"height variation {max(_ys)-min(_ys):.2f} detected but reference shows "
+                "all objects at the same height — remove Y-axis spread."
+            )
+
+    _ref_connector = _ac.get("connector_type")
+    if _ref_connector == "rigid_stick" and len(_named.get("stick", [])) == 0:
+        polish_items.append(
+            "reference shows rigid sticks — name connector meshes 'stick' "
+            "rather than 'string'."
+        )
+
     # ── A: Geometry Integrity (35 pts) ────────────────────────────────────────
     # 5 geo loads + 15 normals + 10 uvs + 5 clean displacement = 35
     gi_score    = 0
@@ -466,7 +828,8 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
     else:
         gi_failures.append(f"geometry load failed: {geo.get('error', 'unknown')}")
         critical_failures.append(
-            "geometry load error — createAsset() must return a valid THREE.Object3D with at least one Mesh"
+            f"geometry load error — createAsset() threw: {geo.get('error', 'unknown')}. "
+            "Fix this specific JS error; the asset must return a valid THREE.Object3D with at least one Mesh."
         )
 
     gi_status = "FAIL" if not geo.get("ok") else ("WARN" if gi_failures else "PASS")
@@ -525,7 +888,34 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
         rq_failures.append(
             f"render failed: {shot.get('render_error') or shot.get('error', 'Puppeteer crash')}"
         )
-        critical_failures.append("render crash — asset throws a runtime error")
+        critical_failures.append(
+            f"render crash — asset threw: {shot.get('render_error') or shot.get('error', 'unknown error')}. "
+            "Fix this specific JS runtime error."
+        )
+
+    # Dominant hue validation (Item 3)
+    pixel_m = analysis.get("pixel_metrics") or {}
+    dom_hue = pixel_m.get("dominant_hue")
+    mean_sat = pixel_m.get("mean_saturation")
+    exp_hsv = load_brief().get("expected_color_hsv", {})
+    if dom_hue is not None and exp_hsv:
+        hue_ctr = exp_hsv.get("hue_center")
+        hue_tol = exp_hsv.get("hue_tolerance", 35)
+        sat_min = exp_hsv.get("saturation_min", 0.0)
+        if hue_ctr is not None:
+            diff = abs(dom_hue - hue_ctr)
+            if diff > 180:
+                diff = 360 - diff
+            if diff > hue_tol:
+                rq_failures.append(
+                    f"dominant hue {dom_hue:.0f}° is {diff:.0f}° from expected {hue_ctr}° "
+                    f"(tolerance ±{hue_tol}°) — vertex colors wrong hue for this asset type"
+                )
+        if mean_sat is not None and sat_min > 0 and mean_sat < sat_min:
+            rq_failures.append(
+                f"mean saturation {mean_sat:.2f} < {sat_min} — "
+                "vertex colors too grey; increase palette saturation"
+            )
 
     rq_status = (
         "FAIL" if not shot.get("ok") or coverage <= 0.02
@@ -569,6 +959,21 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
                 "both roughness and metalness at THREE.js defaults (1.0 / 0.0) — configure material properties"
             )
 
+        # Material property range check (Item 1)
+        exp_mat = load_brief().get("expected_material_properties", {})
+        r_min = exp_mat.get("roughness_min")
+        r_max = exp_mat.get("roughness_max")
+        r_vals = geo.get("roughness_values", [])
+        if r_vals and (r_min is not None or r_max is not None):
+            bad = [r for r in r_vals if
+                   (r_min is not None and r < r_min) or (r_max is not None and r > r_max)]
+            if bad:
+                rng = f"{r_min or '?'}–{r_max or '?'}"
+                mc_failures.append(
+                    f"roughness values {[round(r,3) for r in bad]} outside expected range {rng} "
+                    f"— adjust material roughness for this asset type"
+                )
+
     mc_status = "FAIL" if not geo.get("material_compliant", True) else ("WARN" if mc_failures else "PASS")
 
     # ── D: Geometric Quality (15 pts) ────────────────────────────────────────
@@ -601,6 +1006,98 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
         )
         polish_items.append(f"adjust asset to ~1–2 units tall (current scale_max={scale_max:.2f})")
 
+    # Proportional ratio check (Item 4)
+    brief_chk = load_brief()
+    bbox = geo.get("bounding_box", {})
+    bx, by = bbox.get("x", 0.0), bbox.get("y", 0.0)
+    exp_props = brief_chk.get("expected_proportions", {})
+    hw_range = exp_props.get("height_to_width_ratio")
+    if hw_range and bx > 0.05:
+        actual_hw = by / bx
+        if not (hw_range[0] <= actual_hw <= hw_range[1]):
+            gq_failures.append(
+                f"height/width ratio {actual_hw:.2f} outside expected {hw_range[0]:.2f}–{hw_range[1]:.2f} "
+                "— check asset orientation and proportions"
+            )
+
+    # Arrangement check (Phase 3)
+    brief_chk = load_brief()
+    exp_arr = brief_chk.get("expected_arrangement")
+    arr_ok = geo.get("arrangement_ok")
+    if exp_arr is not None:
+        if arr_ok is False:
+            exp_desc = (
+                f"expected {exp_arr.get('body_count', '?')} body mesh(es) in "
+                f"{exp_arr.get('row_count', '?')} row(s) of {exp_arr.get('bodies_per_row', '?')}, "
+                f"found {geo.get('arrangement_body_count', 0)} body mesh(es) in "
+                f"{geo.get('arrangement_row_count', 0)} row(s)"
+            )
+            gq_failures.append(f"incorrect arrangement: {exp_desc}")
+            critical_failures.append(
+                f"wrong mesh arrangement — {exp_desc}. "
+                f"Fix: {exp_arr.get('description', 'check expected_arrangement in brief.json')}"
+            )
+        elif arr_ok is True:
+            gq_score += 5  # bonus 5 pts for correct arrangement (Category D max goes 15→20)
+
+    # Mesh type check (Phase 5 reduced)
+    exp_types = brief_chk.get("expected_mesh_types", {})
+    if exp_types and geo.get("ok"):
+        actual_names = set(geo.get("mesh_names", []))
+        for expected_name in exp_types:
+            if expected_name not in actual_names:
+                polish_items.append(
+                    f"mesh '{expected_name}' not found in geometry — "
+                    f"expected type '{exp_types[expected_name]}'; "
+                    "add this mesh or rename an existing one for correct Realistic material assignment"
+                )
+
+    # Cluster density check (vision enhancement Item 4)
+    density_max = brief_chk.get("expected_cluster_density_max")
+    measured_density = geo.get("cluster_density_mean")
+    if density_max is not None and measured_density is not None and measured_density > density_max:
+        ref_density_str = (
+            (brief_chk.get("reference_spec") or {})
+            .get("spatial_arrangement", {})
+            .get("density", "tightly_packed")
+        )
+        primary_nm = brief_chk.get("expected_arrangement", {}).get("primary_mesh_name", "object")
+        gq_failures.append(
+            f"cluster too spread out: cluster_density_mean={measured_density:.3f} > "
+            f"max {density_max:.3f} — pack '{primary_nm}'s closer together. "
+            f"Reference shows '{ref_density_str}' density."
+        )
+
+    # Silhouette H:W ratio check (vision enhancement Item 7)
+    analysis_for_gq = metrics.get("screenshot_analysis") or {}
+    pixel_metrics = analysis_for_gq.get("pixel_metrics") or {}
+    exp_sil = brief_chk.get("expected_silhouette_hw_ratio")
+    measured_hw = pixel_metrics.get("silhouette_hw_ratio")
+    if exp_sil and measured_hw is not None:
+        hw_min = exp_sil.get("min", 0.0)
+        hw_max = exp_sil.get("max", 99.0)
+        if not (hw_min <= measured_hw <= hw_max):
+            gq_failures.append(
+                f"silhouette H:W ratio {measured_hw:.2f} outside expected "
+                f"{hw_min:.2f}–{hw_max:.2f} — "
+                "asset proportions do not match reference shape."
+            )
+
+    # Pixel shape metrics (Phase 2)
+    pixel_targets = brief_chk.get("pixel_targets") or {}
+    arc = pixel_metrics.get("arc_depth_ratio")
+    tgt_arc = pixel_targets.get("arc_depth_ratio_min")
+    if arc is not None and tgt_arc is not None and arc < tgt_arc:
+        gq_failures.append(
+            f"arc_depth_ratio={arc:.3f} < {tgt_arc} — curvature too shallow; increase yDip parameter"
+        )
+    asym = pixel_metrics.get("coverage_asymmetry")
+    tgt_asym = pixel_targets.get("coverage_asymmetry_max")
+    if asym is not None and tgt_asym is not None and asym > tgt_asym:
+        polish_items.append(
+            f"coverage_asymmetry={asym:.3f} > {tgt_asym} — asset may be skewed or off-centre"
+        )
+
     gq_status = "FAIL" if tris == 0 else ("WARN" if gq_failures else "PASS")
 
     # ── E: Visual / Code Quality (10 pts) ────────────────────────────────────
@@ -632,6 +1129,19 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
             )
     # None = vision not run — no penalty
 
+    # Code complexity guard (Item 2)
+    code_lines = metrics.get("code_line_count", 0)
+    if code_lines > 500:
+        vq_failures.append(
+            f"code too long: {code_lines} lines — LLM rewrote the whole file; "
+            "make MINIMAL targeted changes (add/modify 5–30 lines, not 100+)"
+        )
+    elif code_lines > 250:
+        polish_items.append(
+            f"code length {code_lines} lines — prefer shorter focused implementations; "
+            "avoid rewriting unrelated sections"
+        )
+
     vq_status = "FAIL" if vq_failures else ("PASS" if vq_score == 10 else "WARN")
 
     # ── Aggregate ─────────────────────────────────────────────────────────────
@@ -644,6 +1154,19 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
         tier = TIER_PRODUCTION
     else:
         tier = TIER_POLISH
+
+    # Reference similarity gate — demote to POLISH when shape doesn't match reference photo
+    if ref_sim is not None and ref_sim < 6:
+        what_to_improve = visual.get("what_to_improve") or "shape, proportions, and distinctive features"
+        ref_item = (
+            f"reference_similarity={ref_sim}/10 < 6 — shape must more closely match the reference photo. "
+            f"Specific gaps: {what_to_improve}"
+        )
+        # Insert after any vertex-color requirement (which is a mandatory brief constraint)
+        insert_pos = 1 if polish_items and "vertex color" in polish_items[0] else 0
+        polish_items.insert(insert_pos, ref_item)
+        if tier == TIER_PRODUCTION:
+            tier = TIER_POLISH
 
     # Brief-driven texture requirements — demote to POLISH so loop keeps iterating
     brief = load_brief()
@@ -793,7 +1316,7 @@ def extract_js(text: str) -> str:
 
 # ── Validate generated JS ─────────────────────────────────────────────────────
 
-def validate_js_basic(js: str) -> tuple[bool, str]:
+def validate_js_basic(js: str, forbidden_patterns: list[str] | None = None) -> tuple[bool, str]:
     if not js or len(js) < 50:
         return False, FAIL_GEN
     if "export function createAsset" not in js:
@@ -802,7 +1325,24 @@ def validate_js_basic(js: str) -> tuple[bool, str]:
         return False, FAIL_SYNTAX
     if js.count("{") < js.count("}") - 3 or js.count("{") > js.count("}") + 8:
         return False, FAIL_SYNTAX
+    line_count = len(js.splitlines())
+    if line_count > 500:
+        log.warning(f"[validate_js] code very long: {line_count} lines — over-engineering risk")
+    if forbidden_patterns:
+        for pattern in forbidden_patterns:
+            if pattern in js:
+                log.warning(f"[validate_js] forbidden pattern found: {pattern!r}")
+                return False, FAIL_SYNTAX
     return True, "ok"
+
+
+def _banned_js_patterns(steering: dict) -> list[str]:
+    """Extract literal JS code patterns to block from the forbidden_improvements list."""
+    patterns = []
+    for f in steering.get("forbidden_improvements", []):
+        if "group.rotation" in f:
+            patterns.append("group.rotation")
+    return patterns
 
 # ── Episodic memory ───────────────────────────────────────────────────────────
 
@@ -1036,16 +1576,53 @@ Return ONLY valid JSON:
             f"recognisable={result.get('recognisable', '?')}"
         )
 
-        # Reference comparison (Phase 5): if a reference image exists, score similarity
+        # Reference comparison: dual-image direct compare (Item 6) with legacy fallback
         ref_path = find_reference(asset_name)
         if ref_path:
-            ref_cmp = run_reference_comparison(asset_name, ref_path, description)
-            result["reference_similarity"] = ref_cmp.get("reference_similarity")
-            result["reference_notes"]      = ref_cmp.get("what_to_improve")
+            ref_cmp = run_reference_comparison(
+                asset_name, ref_path, description, stitched_path=stitched_path
+            )
+            result["reference_similarity"]   = ref_cmp.get("reference_similarity")
+            result["reference_notes"]        = ref_cmp.get("what_to_improve")
+            result["reference_count_match"]  = ref_cmp.get("reference_count_match")
+            result["reference_critical_gap"] = ref_cmp.get("reference_critical_gap")
 
     return result
 
 # ── Agent: Critic ─────────────────────────────────────────────────────────────
+
+def _format_reference_spec_block(reference_spec: dict) -> str:
+    """Format reference_spec as a structured text block for critic/planner prompts."""
+    if not reference_spec:
+        return ""
+    ci = reference_spec.get("count_and_identity", {})
+    sa = reference_spec.get("spatial_arrangement", {})
+    ac = reference_spec.get("attachment_and_connection", {})
+    sm = reference_spec.get("surface_and_material", {})
+    sh = reference_spec.get("shape_and_proportions", {})
+    lines = ["REFERENCE SPEC (ground truth from reference image — do NOT hallucinate):"]
+    if ci.get("object_count"):
+        lines.append(f"  Object count: {ci['object_count']} {ci.get('object_type', 'objects')}")
+    if sh.get("overall_shape"):
+        lines.append(f"  Shape: {sh['overall_shape']}")
+    if sh.get("silhouette_description"):
+        lines.append(f"  Silhouette: {sh['silhouette_description']}")
+    if ac.get("connector_type"):
+        lines.append(f"  Connectors: {ac['connector_type']} — {ac.get('connector_description', '')}")
+    if ac.get("all_at_same_height") is not None:
+        lines.append(f"  All at same height: {ac['all_at_same_height']}")
+    if sa.get("arrangement_type"):
+        lines.append(f"  Arrangement: {sa['arrangement_type']}, density={sa.get('density', '?')}")
+    if sa.get("height_variation"):
+        lines.append(f"  Height variation: {sa['height_variation']}")
+    if sm.get("surface_finish"):
+        lines.append(f"  Surface: {sm['surface_finish']} / {sm.get('texture_type', '?')}")
+    if sm.get("has_texture_map") is not None:
+        lines.append(
+            f"  Texture map: {'YES' if sm['has_texture_map'] else 'NO — vertex colors only'}"
+        )
+    return "\n".join(lines) + "\n"
+
 
 CRITIC_SYSTEM = (
     "You are a technical 3D asset quality critic. "
@@ -1117,10 +1694,49 @@ STYLE TARGET — PBR realistic:
 - Reward: natural surface variation, correct material response to lighting
 """
 
+    # Phase 2: quantitative pixel metrics
+    pixel_metrics_block = ""
+    pixel_metrics = (metrics.get("screenshot_analysis") or {}).get("pixel_metrics") or {}
+    if pixel_metrics:
+        brief_pm = load_brief()
+        pixel_targets = brief_pm.get("pixel_targets") or {}
+        pm_lines = ["PIXEL SHAPE MEASUREMENTS (quantitative):"]
+        arc = pixel_metrics.get("arc_depth_ratio")
+        if arc is not None:
+            tgt = pixel_targets.get("arc_depth_ratio_min", 0.12)
+            status = "OK" if arc >= tgt else f"LOW (target ≥{tgt}) — increase yDip"
+            pm_lines.append(f"  arc_depth_ratio = {arc:.3f}  {status}")
+        asym = pixel_metrics.get("coverage_asymmetry")
+        if asym is not None:
+            tgt = pixel_targets.get("coverage_asymmetry_max", 0.30)
+            status = "OK" if asym <= tgt else f"HIGH (target ≤{tgt}) — asset may be skewed"
+            pm_lines.append(f"  coverage_asymmetry = {asym:.3f}  {status}")
+        czb = pixel_metrics.get("color_zone_boundary")
+        if czb is not None:
+            tgt_min = pixel_targets.get("color_zone_boundary_min", 0.05)
+            tgt_max = pixel_targets.get("color_zone_boundary_max", 0.30)
+            if tgt_min <= czb <= tgt_max:
+                status = "OK"
+            elif czb < tgt_min:
+                status = f"TOO NARROW (target {tgt_min:.2f}–{tgt_max:.2f}) — green zone missing"
+            else:
+                status = f"TOO WIDE (target {tgt_min:.2f}–{tgt_max:.2f}) — green zone too large"
+            pm_lines.append(f"  color_zone_boundary = {czb:.3f}  {status}")
+        pixel_metrics_block = "\n".join(pm_lines) + "\n"
+
+    # Phase 1: camera basis
+    cam_block = _camera_basis_block(load_brief())
+
+    # Reference spec block (Item 5)
+    ref_spec_block = _format_reference_spec_block(load_brief().get("reference_spec", {}))
+    if visual.get("reference_critical_gap"):
+        ref_spec_block += f"\nREFERENCE CRITICAL GAP: {visual['reference_critical_gap']}\n"
+
     prompt = f"""Evaluate this Three.js game asset and produce a JSON critique.
 
 ASSET: {asset_name}  (iteration {iteration})
-{style_notes}{rubric_block}
+{cam_block}
+{style_notes}{rubric_block}{ref_spec_block}{pixel_metrics_block}
 GEOMETRY METRICS:
 {json.dumps(geo, indent=2)}
 
@@ -1188,6 +1804,14 @@ def _score_bottleneck(metrics: dict, score: float) -> str:
     analysis = metrics.get("screenshot_analysis") or {}
     if not geo.get("ok"):
         return "fix geometry export so createAsset() returns a valid THREE.Object3D with at least one Mesh"
+    shared_edge = geo.get("shared_edge_fraction", 1.0)
+    if shared_edge < SHARED_EDGE_MIN:
+        return (
+            f"PREREQUISITE — mesh connectivity broken (shared_edge_fraction={shared_edge:.3f} < {SHARED_EDGE_MIN}): "
+            "call geo.deleteAttribute('uv') before mergeVertices() on IcosahedronGeometry, "
+            "or use position-based hash (not sequential vertex index) for noise. "
+            "Fix this BEFORE any other improvement."
+        )
     tris = geo.get("triangle_count", 0)
     if tris < POLY_IDEAL_MIN:
         return f"increase triangle count from {tris} to at least {POLY_IDEAL_MIN} (currently in {'acceptable' if tris >= POLY_MIN else 'very low'} range, losing 0.10 poly bonus)"
@@ -1267,10 +1891,13 @@ def run_planner(
     if forbidden:
         forbidden_block = "FORBIDDEN (must not attempt):\n" + "\n".join(f"  - {f}" for f in forbidden) + "\n\n"
 
+    cam_block = _camera_basis_block(load_brief())
     episodic_block   = read_episodic_summary()
     graveyard_block  = read_graveyard_summary()
+    planner_ref_spec = _format_reference_spec_block(load_brief().get("reference_spec", {}))
 
-    prompt = f"""{focus_block}Propose ONE specific improvement for this Three.js {asset_name} asset.
+    prompt = f"""{focus_block}{cam_block}
+{planner_ref_spec}Propose ONE specific improvement for this Three.js {asset_name} asset.
 
 SCORING STATUS:
 {status_line}
@@ -1311,6 +1938,35 @@ Return ONLY this JSON:
                 "add UV projection, keep triangle count between 200 and 1000."
             ),
         }
+
+    # Phase 1: validate plan doesn't violate forbidden improvements
+    if result and forbidden:
+        instruction_lower = result.get("instruction", "").lower()
+        title_lower = result.get("title", "").lower()
+        combined = instruction_lower + " " + title_lower
+        violations = []
+        axis_checks = [
+            ("bow in z", "bow"),
+            ("fan in y", "fan"),
+            ("group.rotation", "rotation"),
+            ("vertical layout", "vertical"),
+        ]
+        for kw, label in axis_checks:
+            if kw in combined:
+                matching_forbidden = [f for f in forbidden if label in f.lower() or kw in f.lower()]
+                if matching_forbidden:
+                    violations.append(f"'{kw}' violates: {matching_forbidden[0][:80]}")
+
+        if violations:
+            log.warning(f"[planner] plan violates forbidden improvements: {violations}")
+            violation_msg = "; ".join(violations)
+            retry_prompt = prompt + f"\n\nREJECTED PLAN: The plan above violated these forbidden improvements: {violation_msg}. Produce a NEW plan that does not use these approaches."
+            raw2 = call_llm(retry_prompt, json_mode=True, system=PLANNER_SYSTEM)
+            result2 = extract_json(raw2)
+            if result2:
+                result = result2
+                log.info(f"[planner] re-planned after violation: {result.get('title', '?')!r}")
+
     return result
 
 # ── Agent: Coder (single variant) ────────────────────────────────────────────
@@ -1359,7 +2015,8 @@ Requirements:
 2. Keep: export function createAsset() {{ ... }}
 3. createAsset() must return a THREE.Object3D
 4. Apply ONLY the specified improvement — no unrelated changes
-5. Output the COMPLETE file, nothing else
+5. Make MINIMAL targeted changes — add or modify 5–30 lines, do not rewrite unrelated sections
+6. Output the COMPLETE file, nothing else
 
 Write ONLY the JavaScript. No markdown, no explanation."""
 
@@ -1403,8 +2060,10 @@ def evaluate_ab_candidates(
         js_a = fut_a.result()
         js_b = fut_b.result()
 
-    ok_a, reason_a = validate_js_basic(js_a)
-    ok_b, reason_b = validate_js_basic(js_b)
+    steering_for_val = load_steering()
+    banned = _banned_js_patterns(steering_for_val)
+    ok_a, reason_a = validate_js_basic(js_a, banned)
+    ok_b, reason_b = validate_js_basic(js_b, banned)
 
     if not ok_a and not ok_b:
         log.warning(f"[A/B] both failed basic validation: A={reason_a}  B={reason_b}")
@@ -1418,6 +2077,10 @@ def evaluate_ab_candidates(
     # Geometry-validate both passing candidates
     geo_a = adapter.validate_geometry(path_a) if ok_a else {"ok": False}
     geo_b = adapter.validate_geometry(path_b) if ok_b else {"ok": False}
+
+    brief_for_arr = load_brief()
+    _check_arrangement(geo_a, brief_for_arr)
+    _check_arrangement(geo_b, brief_for_arr)
 
     score_geo_a = geo_only_score(geo_a)
     score_geo_b = geo_only_score(geo_b)
@@ -1538,6 +2201,34 @@ def read_graveyard_summary(n: int = 5) -> str:
         + "\n".join(f"  - {e}" for e in errors[:6])
     )
 
+def _check_failure_patterns(asset_name: str, outcome: str) -> None:
+    """If same improvement_type regresses 3 consecutive times, write a rule."""
+    if not EPISODIC_PATH.exists():
+        return
+    lines = EPISODIC_PATH.read_text().strip().splitlines()
+    recent = []
+    for line in lines[-6:]:
+        try:
+            r = json.loads(line)
+            if len(r) >= 14 and r[2] == asset_name:
+                recent.append({"type": r[4], "outcome": r[13]})
+        except Exception:
+            pass
+    if len(recent) < 3:
+        return
+    last3 = recent[-3:]
+    bad_outcomes = {FAIL_GEOMETRY, FAIL_RENDER, FAIL_SYNTAX, "regression", "reverted"}
+    if all(r["outcome"] in bad_outcomes for r in last3):
+        imp_type = last3[-1]["type"]
+        if all(r["type"] == imp_type for r in last3):
+            rule = (
+                f"Attempting '{imp_type}' improvements for {asset_name} has regressed or failed "
+                "3 consecutive times — avoid this approach and try a fundamentally different type"
+            )
+            append_rule(rule)
+            log.info(f"[pattern-rule] wrote negative rule for repeated {imp_type!r} failures")
+
+
 # ── On-pass export ─────────────────────────────────────────────────────────────
 
 def export_passed_asset(state: dict, metrics: dict, score: float, adapter: ThreeJSAdapter) -> None:
@@ -1618,6 +2309,11 @@ def run_loop(state: dict, max_iter: int) -> None:
         state["current_version"] = "v1"
         save_state(state)
 
+    # Build reference spec once (cached by image checksum in brief.json)
+    ref_path_for_spec = find_reference(asset_name)
+    if ref_path_for_spec:
+        build_reference_spec(asset_name, ref_path_for_spec)
+
     start_iter = state["iteration"]
 
     for _ in range(max_iter):
@@ -1636,6 +2332,8 @@ def run_loop(state: dict, max_iter: int) -> None:
         # ── Playtester ──────────────────────────────────────────────────────
         t0 = time.time()
         metrics = adapter.run(asset_path, f"{asset_name}_{version}")
+        _check_arrangement(metrics.get("geometry") or {}, load_brief())
+        metrics["code_line_count"] = len(asset_path.read_text().splitlines())
 
         # Vision runs before scoring so recognisable-bonus and reference-bonus apply
         stitched = metrics.get("stitched_path")
@@ -1655,21 +2353,64 @@ def run_loop(state: dict, max_iter: int) -> None:
         if rubric["critical_failures"]:
             log.info(f"  [BLOCKERS] {'; '.join(rubric['critical_failures'][:2])}")
 
+        # ── Stagnation detection (Item 5) ───────────────────────────────────
+        prev_scores = [h.get("score", 0) for h in state["history"][-5:] if "score" in h]
+        is_stagnant = (
+            len(prev_scores) >= 4
+            and max(prev_scores) - min(prev_scores) < 0.015
+            and score < PASS_THRESHOLD
+            and rubric["tier"] in (TIER_POLISH, TIER_FAILED)
+        )
+        if is_stagnant:
+            state["stagnation_count"] = state.get("stagnation_count", 0) + 1
+            log.info(f"[stagnation] count={state['stagnation_count']} score={score:.3f} (not improving)")
+        else:
+            state["stagnation_count"] = 0
+
+        if state.get("stagnation_count", 0) == 4:
+            _inject_stagnation_recovery(asset_path)
+        elif state.get("stagnation_count", 0) == 8:
+            log.warning(f"[stagnation] {asset_name} stuck for 8 iters — human review recommended")
+            steering_s = load_steering()
+            if steering_s.get("force_plan", {}).get("_stagnation_injected"):
+                steering_s["force_plan"] = None
+                STEERING_PATH.write_text(json.dumps(steering_s, indent=2))
+
         # ── Accept / revert ─────────────────────────────────────────────────
+        # ref_sim < 3 means completely wrong shape (e.g. 0/10 vs reference).
+        # Block acceptance even if automated score is higher — prevents a bad
+        # shape from becoming new best and spawning further divergent candidates.
+        ref_sim_ok = visual.get("reference_similarity", 10) >= 3
+        if not ref_sim_ok:
+            log.info(
+                f"[ref_sim block] ref_sim={visual.get('reference_similarity')}/10 < 3 — "
+                f"shape regression, not updating best"
+            )
+
         if state["best_version"] is None or iteration == start_iter + 1:
             state["best_version"] = version
             state["best_score"]   = score
             state["consecutive_regressions"] = 0
-        elif score >= state["best_score"]:
+        elif score >= state["best_score"] and ref_sim_ok:
             state["best_version"] = version
             state["best_score"]   = score
             state["consecutive_regressions"] = 0
             log.info(f"[accept] new best: {version} score={score:.3f}")
+            if state["iteration"] <= 3:  # only auto-calibrate early, from clean starts
+                _auto_calibrate_color(metrics)
+            # Clear manual force_plan once it leads to an accepted improvement
+            _steer = load_steering()
+            if _steer.get("force_plan") and not _steer["force_plan"].get("_stagnation_injected"):
+                _steer["force_plan"] = None
+                STEERING_PATH.write_text(json.dumps(_steer, indent=2))
+                log.info("[steer] cleared manual force_plan after acceptance")
         else:
             state["consecutive_regressions"] += 1
+            reason = (f"score {score:.3f} < best {state['best_score']:.3f}" if ref_sim_ok else
+                      f"ref_sim={visual.get('reference_similarity')}/10 < 3 blocked acceptance")
             log.info(
                 f"[regression {state['consecutive_regressions']}/{REVERT_AFTER_N_REGRESSIONS}] "
-                f"score {score:.3f} < best {state['best_score']:.3f}"
+                f"{reason}"
             )
             if state["consecutive_regressions"] >= REVERT_AFTER_N_REGRESSIONS:
                 log.info(f"[revert] → {state['best_version']}")
@@ -1728,6 +2469,7 @@ def run_loop(state: dict, max_iter: int) -> None:
             }
             state["history"].append(entry)
             write_episodic(iteration, asset_name, version, metrics, score, plan, outcome)
+            _check_failure_patterns(asset_name, outcome)
             state["trust_score"] = compute_trust(state["history"])
             write_status(state, metrics, score, critique, rubric=rubric)
             save_state(state)
@@ -1741,7 +2483,12 @@ def run_loop(state: dict, max_iter: int) -> None:
 
         winner_score  = calculate_score(winner_metrics)
         winner_rubric = get_rubric(winner_metrics, asset_name)
-        outcome = "accepted" if winner_score >= state["best_score"] else "regression"
+        # ref_sim_ok was set above from the current iteration's visual analysis.
+        # If the current version has critically wrong shape, don't accept the winner either.
+        outcome = "accepted" if winner_score >= state["best_score"] and ref_sim_ok else "regression"
+
+        if outcome == "accepted" and winner_score > state.get("best_score", 0) + 0.04:
+            _auto_append_focus_hint(plan)
 
         entry = {
             "version":       version,
@@ -1755,9 +2502,12 @@ def run_loop(state: dict, max_iter: int) -> None:
         }
         state["history"].append(entry)
         state["current_version"] = new_version
+        if outcome == "accepted":
+            _sync_to_dist(asset_name, new_version)
         state["trust_score"] = compute_trust(state["history"])
 
         write_episodic(iteration, asset_name, version, metrics, score, plan, outcome)
+        _check_failure_patterns(asset_name, outcome)
         write_status(state, winner_metrics, winner_score, critique, rubric=winner_rubric)
         save_state(state)
 

@@ -193,6 +193,8 @@ class ThreeJSAdapter:
         else:
             dark_patch_fraction = 0.0
 
+        pixel_metrics = self._measure_shape_metrics(arr, bg_mask, w, h)
+
         return {
             "render_ok":            coverage > 0.02,
             "coverage":             round(coverage, 4),
@@ -202,7 +204,122 @@ class ThreeJSAdapter:
             "coverage_uniformity":  round(1.0 - min(coverage_std * 4, 1.0), 3),
             "dark_patch_fraction":  round(dark_patch_fraction, 4),
             "resolution":           f"{w}x{h}",
+            "pixel_metrics":        pixel_metrics,
         }
+
+    def _measure_shape_metrics(self, arr, bg_mask, w, h):
+        import numpy as np
+        qh, qw = h // 2, w // 2
+        quad_bg = bg_mask[:qh, :qw]
+        non_bg = ~quad_bg
+
+        if non_bg.sum() < 100:
+            return {}
+
+        rows_with_content = np.where(non_bg.any(axis=1))[0]
+        cols_with_content = np.where(non_bg.any(axis=0))[0]
+
+        if len(rows_with_content) == 0 or len(cols_with_content) == 0:
+            return {}
+
+        horiz_span = int(cols_with_content[-1]) - int(cols_with_content[0])
+        if horiz_span < 10:
+            return {}
+
+        sample_cols = np.linspace(cols_with_content[0], cols_with_content[-1], 12, dtype=int)
+        top_edges = []
+        for col in sample_cols:
+            col_non_bg = non_bg[:, col]
+            idxs = np.where(col_non_bg)[0]
+            if len(idxs) > 0:
+                top_edges.append(int(idxs[0]))
+
+        arc_depth_ratio = 0.0
+        if len(top_edges) >= 3:
+            top_variation = max(top_edges) - min(top_edges)
+            arc_depth_ratio = round(top_variation / horiz_span, 4)
+
+        left_cov = float((~bg_mask[:, :w // 2]).sum()) / (bg_mask[:, :w // 2].size)
+        right_cov = float((~bg_mask[:, w // 2:]).sum()) / (bg_mask[:, w // 2:].size)
+        coverage_asymmetry = round(abs(left_cov - right_cov), 4)
+
+        quad_arr = arr[:qh, :qw].astype(np.float32)
+        color_zone_boundary = None
+        strip_green_cols = []
+        for col in range(qw):
+            pixels = quad_arr[:, col][~quad_bg[:, col]]
+            if len(pixels) < 3:
+                continue
+            r, g, b = pixels[:, 0].mean(), pixels[:, 1].mean(), pixels[:, 2].mean()
+            total = r + g + b + 1e-9
+            if g / total > 0.42:
+                strip_green_cols.append(col)
+
+        if strip_green_cols and horiz_span > 0:
+            rightmost_green = max(strip_green_cols)
+            green_fraction = (rightmost_green - int(cols_with_content[0])) / horiz_span
+            color_zone_boundary = round(max(0.0, min(1.0, green_fraction)), 4)
+
+        result = {
+            "arc_depth_ratio": arc_depth_ratio,
+            "coverage_asymmetry": coverage_asymmetry,
+        }
+        if color_zone_boundary is not None:
+            result["color_zone_boundary"] = color_zone_boundary
+
+        # HSV color statistics for hue validation
+        try:
+            import colorsys
+            non_bg_pixels = arr[~bg_mask] if (~bg_mask).sum() > 200 else None
+            if non_bg_pixels is not None:
+                hues, sats = [], []
+                for px in non_bg_pixels[::5]:  # sample every 5th pixel
+                    r, g, b = float(px[0]) / 255, float(px[1]) / 255, float(px[2]) / 255
+                    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+                    if v > 0.12:
+                        hues.append(h * 360)
+                        sats.append(s)
+                if hues:
+                    import numpy as np
+                    result["dominant_hue"] = round(float(np.median(hues)), 1)
+                    result["hue_variance"] = round(float(np.std(hues)), 1)
+                    result["mean_saturation"] = round(float(np.mean(sats)), 3)
+        except Exception:
+            pass
+
+        return result
+
+    # ── Silhouette aspect-ratio metrics (Item 7) ──────────────────────────────
+
+    def compute_silhouette_metrics(self, image_path: Path) -> dict:
+        try:
+            from PIL import Image
+            import numpy as np
+            img = Image.open(image_path).convert("RGB")
+            arr = np.array(img, dtype=np.float32)
+            bg = np.array([26.0, 26.0, 46.0])
+            bg_mask = np.all(np.abs(arr - bg) < 28, axis=2)
+            non_bg = ~bg_mask
+            if non_bg.sum() < 200:
+                return {}
+            rows = np.where(non_bg.any(axis=1))[0]
+            cols = np.where(non_bg.any(axis=0))[0]
+            if not len(rows) or not len(cols):
+                return {}
+            sil_h = int(rows[-1]) - int(rows[0]) + 1
+            sil_w = int(cols[-1]) - int(cols[0]) + 1
+            if sil_w < 10 or sil_h < 10:
+                return {}
+            r0, r1 = int(rows[0]), int(rows[-1]) + 1
+            c0, c1 = int(cols[0]), int(cols[-1]) + 1
+            fill = float(non_bg[r0:r1, c0:c1].sum()) / (sil_h * sil_w)
+            return {
+                "silhouette_hw_ratio": round(sil_h / sil_w, 3),
+                "silhouette_fill_fraction": round(fill, 3),
+            }
+        except Exception as e:
+            logging.warning(f"compute_silhouette_metrics failed: {e}")
+            return {}
 
     # ── Full playtester run ───────────────────────────────────────────────────
 
@@ -232,6 +349,18 @@ class ThreeJSAdapter:
             self._save_metrics(result, version_tag, ts)
             return result
 
+        # Early render skip for severely torn geometry (Item 9)
+        geo_ok = result["geometry"].get("ok", False)
+        shared = result["geometry"].get("shared_edge_fraction", 1.0) if geo_ok else 1.0
+        if geo_ok and shared < 0.85:
+            result["screenshot"] = {
+                "ok": False,
+                "error": f"render skipped — mesh too torn (shared_edge_fraction={shared:.3f} < 0.85)",
+                "render_skipped": True,
+            }
+            self._save_metrics(result, version_tag, ts)
+            return result
+
         # Stage 2: multi-angle render
         output_base = SCREENSHOTS_DIR / f"{version_tag}_{ts}"
         render = self.render_multi_angle(asset_path, output_base)
@@ -258,6 +387,13 @@ class ThreeJSAdapter:
             first = Path(screenshots[0]["path"])
             if first.exists():
                 result["screenshot_analysis"] = self.analyze_screenshot(first)
+
+        # Stage 3c: silhouette metrics from front angle (Item 7)
+        front_path = (result.get("angle_paths") or {}).get("f")
+        if front_path and Path(front_path).exists():
+            sil = self.compute_silhouette_metrics(Path(front_path))
+            if sil and result.get("screenshot_analysis") is not None:
+                result["screenshot_analysis"].setdefault("pixel_metrics", {}).update(sil)
 
         self._save_metrics(result, version_tag, ts)
         return result

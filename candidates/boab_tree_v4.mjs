@@ -69,6 +69,7 @@ export function createAsset() {
   const trunkPal = [[0.50, 0.44, 0.40], [0.62, 0.56, 0.52], [0.72, 0.66, 0.62]];
   trunkGeo = applyFaceColors(trunkGeo, trunkPal);
   const trunk = new THREE.Mesh(trunkGeo, stdMat());
+  trunk.name = 'trunk';
   trunk.position.y = -0.35;
   trunk.castShadow = true; trunk.receiveShadow = true;
   group.add(trunk);
@@ -101,6 +102,7 @@ export function createAsset() {
 
     lGeo = applyFaceColors(lGeo, leafPal);
     const leaf = new THREE.Mesh(lGeo, stdMat());
+    leaf.name = 'foliage';
     leaf.position.set(...pos);
     leaf.castShadow = true; leaf.receiveShadow = true;
     group.add(leaf);

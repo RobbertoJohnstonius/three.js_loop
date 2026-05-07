@@ -1,5 +1,23 @@
 {
   "force_plan": null,
-  "focus_hints": [],
-  "forbidden_improvements": []
+  "focus_hints": [
+    "Camera at (2.5,2.0,2.5) looking at (0,0.5,0): Y is up, Z is depth, X is left-right.",
+    "Make 12 balloons as separate meshes named 'balloon', each an IcosahedronGeometry(r, 1) scaled (1, 1.2, 1) to be slightly taller than wide. Mesh .name must be 'balloon' for each.",
+    "Each balloon gets ONE solid vertex color (same color for every vertex on that mesh). Use these 12 colors: red #e02020, orange #e06010, yellow #e0d020, lime #50c020, green #20802a, teal #20a0a0, cyan #20c0e0, blue #2050d0, indigo #4020c0, magenta #c020c0, pink #e020a0, white #e0e0e0.",
+    "Balloon centres scattered in 3D: x in [-0.45, 0.45], y in [0.05, 1.55], z in [-0.35, 0.35]. Vary all three axes so the bunch looks full and 3D from the camera.",
+    "Roughness 0.08\u20130.20, metalness 0.0 on every balloon material \u2014 shiny latex.",
+    "CRITICAL: Use THREE.Line (not CylinderGeometry) for strings. CylinderGeometry always gives shared_edge_fraction=0.875 due to cap/seam vertex mismatch, which fails the connectivity threshold of 0.97. Create each string as: const pts=[new THREE.Vector3(bx, by-radius, bz), new THREE.Vector3(0,-0.3,0)]; const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color:0x888888})); line.name='string'; group.add(line);",
+    "deleteAttribute('uv') before mergeVertices() on IcosahedronGeometry to avoid UV seam cracks.",
+    "PREVIOUSLY SUCCESSFUL (other): Review the code for any instances where a constant variable is being reassigned and refactor the code to avoid this. Specifically,",
+    "PREVIOUSLY SUCCESSFUL (geometry): Replace ALL string meshes with THREE.Line objects. For each balloon at world position (bx, by, bz) with radius r: create const pts"
+  ],
+  "forbidden_improvements": [
+    "Do not add group.rotation \u2014 geometry is already oriented for this camera.",
+    "Do not put all balloons at the same Y height \u2014 vary Y between 0.05 and 1.55 for a full 3D bunch.",
+    "Do not use a single mesh for all balloons \u2014 each balloon must be a separate Mesh with name 'balloon'.",
+    "Do not use roughness > 0.5 on balloons \u2014 they must be shiny latex, not matte.",
+    "Do not use MeshBasicMaterial \u2014 must be MeshStandardMaterial with explicit roughness and metalness.",
+    "Do not use TubeGeometry or CylinderGeometry for strings \u2014 both cause shared_edge_fraction < 0.97 due to UV seam/cap vertex mismatch. Use THREE.Line instead.",
+    "Do not set string.rotation.x on a CylinderGeometry \u2014 it rotates strings sideways in Z, making the bounding box far exceed 2 units."
+  ]
 }

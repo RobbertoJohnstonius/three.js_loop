@@ -376,6 +376,41 @@ function set(id, text, cls) {
   el.className = cls || 'val';
 }
 
+// Mirror of threejs_loop.py::calculate_score — keeps HUD current even when loop_state is stale.
+function calculateScore(metrics) {
+  if (!metrics) return null;
+  const geo = metrics.geometry || {};
+  const shot = metrics.screenshot || {};
+  const an  = metrics.screenshot_analysis || {};
+  const va  = metrics.visual_analysis || {};
+  if (!geo.ok) return 0;
+  let s = 0.10;
+  const tris = geo.triangle_count || 0;
+  if (tris >= 200 && tris <= 2000) s += 0.20;
+  else if (tris >= 50 && tris <= 8000) s += 0.10;
+  else if (tris > 0) s += 0.02;
+  if (geo.has_normals) s += 0.15;
+  if (geo.has_uvs)     s += 0.15;
+  if (shot.ok) {
+    s += 0.10;
+    const cov = an.coverage || 0;
+    const div = an.color_diversity || 0;
+    const uni = an.coverage_uniformity || 0;
+    const rec = va.recognisable;
+    const ref = va.reference_similarity;
+    if (cov > 0.02) s += 0.05;
+    if (rec === true || (rec == null && uni >= 0.70)) s += 0.10;
+    if (div > 12) s += 0.10;
+    if ((ref != null && ref >= 7) || cov > 0.10) s += 0.05;
+  }
+  const spike = geo.spike_ratio || 0;
+  if (spike > 3.0) s -= 0.05;
+  const se = geo.shared_edge_fraction != null ? geo.shared_edge_fraction : 1.0;
+  if (se < 0.97) s -= 0.40;
+  if ((an.dark_patch_fraction || 0) > 0.18 && va.normal_issues === true) s -= 0.05;
+  return Math.round(Math.max(0, Math.min(1, s)) * 10000) / 10000;
+}
+
 async function fetchState() {
   try {
     const r = await fetch('/loop_state.json?t=' + Date.now());
@@ -479,6 +514,14 @@ async function pollState() {
     set('s-uvs',     geo.has_uvs ? 'yes' : 'NO',     geo.has_uvs ? 'pass' : 'fail');
     const cov = an.coverage != null ? (an.coverage * 100).toFixed(1) + '%' : '—';
     set('s-cov', cov);
+    // Recalculate score live from metrics — overrides stale loop_state score
+    const liveScore = calculateScore(metrics);
+    if (liveScore != null) {
+      dispScore = liveScore;
+      set('s-score', liveScore.toFixed(3));
+      const scoreEl = document.getElementById('s-score');
+      scoreEl.className = liveScore >= PASS_THRESHOLD ? 'pass' : liveScore >= 0.80 ? 'warn' : 'fail';
+    }
   }
 
   // Swap asset only when not pinned and loop version changed
@@ -528,12 +571,18 @@ function getCurrentAssetName() {
 // Cached per type so the shader compiles only once.
 const _realisticMats = {};
 
-function buildRealisticMaterial(assetName) {
+function buildRealisticMaterial(assetName, meshName = '') {
+  const m = (meshName || '').toLowerCase();
   const t = (assetName || '').toLowerCase();
   let type;
-  if      (/rock|stone|boulder|gravel|pebble/.test(t)) type = 'granite';
+  if      (/foliage|leaf|leaves|canopy|frond/.test(m)) type = 'foliage';
+  else if (/^tip$/.test(m))                            type = 'tip';
+  else if (/^crown$/.test(m))                          type = 'crown';
+  else if (/trunk|bark|branch|stem|wood/.test(m))      type = 'bark';
+  else if (/rock|stone|boulder|gravel|pebble/.test(t)) type = 'granite';
   else if (/tree|wood|log|bark|branch/.test(t))        type = 'bark';
   else if (/metal|barrel|iron|steel|ore|coin|armou?r/.test(t)) type = 'metal';
+  else if (/banana|fruit|citrus|mango|apple|orange/.test(t))   type = 'banana';
   else                                                  type = 'stone';
 
   if (_realisticMats[type]) return _realisticMats[type];
@@ -541,8 +590,12 @@ function buildRealisticMaterial(assetName) {
   const cfgs = {
     granite: { pal: ['vec3(.150,.125,.094)','vec3(.306,.267,.216)','vec3(.541,.478,.408)','vec3(.659,.596,.518)','vec3(.765,.714,.643)','vec3(.867,.827,.773)'], ax:1.00,ay:1.00,az:1.00, sc:3.5, rough:0.88, metal:0.02, bStr:0.50 },
     bark:    { pal: ['vec3(.090,.055,.025)','vec3(.220,.130,.060)','vec3(.380,.240,.120)','vec3(.520,.340,.175)','vec3(.620,.440,.225)','vec3(.720,.540,.285)'], ax:0.25,ay:2.50,az:0.25, sc:4.0, rough:0.92, metal:0.02, bStr:0.60 },
+    foliage: { pal: ['vec3(.040,.095,.014)','vec3(.110,.210,.042)','vec3(.210,.350,.082)','vec3(.295,.430,.112)','vec3(.360,.500,.140)','vec3(.430,.580,.172)'], ax:2.20,ay:0.70,az:2.20, sc:11.0, rough:0.88, metal:0.00, bStr:0.18 },
     metal:   { pal: ['vec3(.140,.130,.130)','vec3(.280,.260,.250)','vec3(.440,.420,.400)','vec3(.580,.560,.530)','vec3(.700,.680,.650)','vec3(.820,.800,.770)'], ax:1.00,ay:1.00,az:1.00, sc:2.0, rough:0.30, metal:0.72, bStr:0.12 },
     stone:   { pal: ['vec3(.180,.160,.140)','vec3(.350,.320,.280)','vec3(.520,.480,.430)','vec3(.640,.600,.540)','vec3(.740,.700,.640)','vec3(.840,.810,.750)'], ax:1.00,ay:1.00,az:1.00, sc:3.0, rough:0.85, metal:0.02, bStr:0.42 },
+    banana:  { pal: ['vec3(.72,.60,.04)','vec3(.82,.70,.05)','vec3(.92,.82,.06)','vec3(1.0,.90,.05)','vec3(1.0,.94,.12)','vec3(1.0,.98,.22)'], ax:1.00,ay:0.80,az:1.00, sc:4.0, rough:0.40, metal:0.01, bStr:0.05 },
+    tip:     { pal: ['vec3(.10,.05,.01)','vec3(.22,.11,.04)','vec3(.33,.17,.06)','vec3(.42,.22,.08)','vec3(.50,.27,.10)','vec3(.56,.30,.12)'], ax:2.0,ay:2.0,az:2.0, sc:8.0, rough:0.88, metal:0.01, bStr:0.20 },
+    crown:   { pal: ['vec3(.18,.09,.03)','vec3(.25,.16,.05)','vec3(.22,.28,.08)','vec3(.30,.38,.12)','vec3(.37,.46,.16)','vec3(.42,.50,.18)'], ax:2.0,ay:2.0,az:2.0, sc:5.0, rough:0.82, metal:0.01, bStr:0.28 },
   };
   const cfg = cfgs[type];
   const [p0,p1,p2,p3,p4,p5] = cfg.pal;
@@ -576,8 +629,12 @@ float _gray(vec3 wp){
 }
 vec3 assetTex(vec3 wp){ return _pal(_gray(wp)); }`;
 
+  // Crown: vertex colors (per-face hash from stemPal) for multi-toned faceted look.
+  // Banana: smooth world-space colour computed in GLSL — no vertex colours so no triangle edges.
+  // Others: FBM palette via map_fragment.
   const mat = new THREE.MeshStandardMaterial({
     roughness: cfg.rough, metalness: cfg.metal, flatShading: false,
+    ...(type === 'crown' ? { vertexColors: true } : {}),
   });
 
   mat.onBeforeCompile = shader => {
@@ -589,10 +646,26 @@ vec3 assetTex(vec3 wp){ return _pal(_gray(wp)); }`;
     );
     // Fragment: inject noise/palette helpers + replace map/roughness/normal chunks
     shader.fragmentShader = glsl + '\n' + shader.fragmentShader;
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <map_fragment>',
-      '{diffuseColor.rgb*=assetTex(vWPos);}'
-    );
+    let mapFrag;
+    if (type === 'banana') {
+      // Smooth bright yellow — world x drives the stem→yellow green fade.
+      // No vertex colours used so zero triangle-edge artefacts; PBR does all shading.
+      // vWPos.x after centreAsset: bounding box -1..+1 but banana tube starts at
+      // world x≈-0.78 (stem) and ends at ≈+0.92 (tips), range ≈1.70.
+      // Normalise relative to tube endpoints so _xn=0 at stem, 1 at tips.
+      mapFrag = `{
+        vec3 _yel=vec3(1.00,0.93,0.10);
+        float _xn=clamp((vWPos.x+0.78)/1.70,0.0,1.0);
+        float _gb=max(0.0,1.0-_xn/0.20);
+        vec3 _grn=vec3(0.24,0.40,0.10);
+        diffuseColor.rgb=mix(_yel,_grn,_gb);
+      }`;
+    } else if (type === 'crown') {
+      mapFrag = '{}'; // vertex colours applied by color_fragment
+    } else {
+      mapFrag = '{diffuseColor.rgb*=assetTex(vWPos);}';
+    }
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', mapFrag);
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <roughnessmap_fragment>',
       `float roughnessFactor=roughness*(.72+_n3(vWPos*${scRgh})*.32);`
@@ -632,7 +705,7 @@ function applyStyle(style) {
 
       if (style === 'realistic') {
         if (!_origMats.has(child)) _origMats.set(child, child.material);
-        child.material = buildRealisticMaterial(assetName);
+        child.material = buildRealisticMaterial(assetName, child.name);
       } else {
         if (_origMats.has(child)) child.material = _origMats.get(child);
         const mats = Array.isArray(child.material) ? child.material : [child.material];

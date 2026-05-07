@@ -3,17 +3,73 @@
   "render_style": "low-poly",
   "texture_style": "vertex-color",
   "target_game": "fantasy RPG with a Three.js/Vite renderer",
-  "poly_target": "300–800 triangles — enough surface detail to read well from game camera distance, not so many that it is expensive",
-  "material_style": "MeshStandardMaterial with roughness 0.75–0.95, low metalness (0.0–0.05) unless the asset is metal or crystal",
-  "size_reference": "asset should fit inside a 2×2×2 unit bounding box",
+  "poly_target": "300\u2013800 triangles \u2014 enough surface detail to read well from game camera distance, not so many that it is expensive",
+  "material_style": "MeshStandardMaterial with roughness 0.05\u20130.35 (shiny latex), metalness 0.0 \u2014 balloons are glossy rubber, NOT matte",
+  "size_reference": "asset should fit inside a 2\u00d72\u00d72 unit bounding box",
   "emissive": false,
   "technique_notes": [
-    "LOW-POLY STYLE: prefer IcosahedronGeometry(r, 1–3) or custom BufferGeometry — keep faces faceted, avoid over-subdivision",
-    "For faceted low-poly look: call geometry.computeVertexNormals() OR leave normals as flat face normals — do NOT smooth if targeting low-poly style",
-    "UV coordinates are required — use spherical projection for round shapes, box projection for blocky shapes",
-    "Vertex color painting is REQUIRED for organic assets (rock, tree, wood, dirt) — add per-vertex RGB variation using FBM noise evaluated at each vertex 3D position. Pattern: geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3)); material.vertexColors = true;",
-    "Vertex colors must be computed from the vertex's 3D position (not UV or buffer index) so they are seam-free and survive mergeVertices(). Use a small hash-based noise function seeded by vertex XYZ.",
-    "Slight vertex displacement (amplitude 0.05–0.12) adds organic character without increasing face count",
-    "Set roughness and metalness explicitly on every material — never leave as default (0.5/0.5)"
-  ]
+    "LOW-POLY STYLE: prefer IcosahedronGeometry(r, 1\u20132) per balloon \u2014 keep faces faceted, avoid over-subdivision",
+    "Each balloon is a SEPARATE mesh with ONE solid vertex color per balloon (not noise-based variation)",
+    "Balloon shape: slightly elongated sphere \u2014 scale Y by 1.15\u20131.25 to make teardrop shape, small pinch at bottom",
+    "UV coordinates are required \u2014 use spherical projection for each balloon sphere",
+    "Vertex color per balloon: pick from a diverse palette (red, green, blue, orange, yellow, magenta, teal, purple, white, dark-green). Apply the same color to every vertex on that balloon.",
+    "Strings: thin CylinderGeometry or custom lines from bottom of each balloon converging to a single point below",
+    "Set roughness 0.08\u20130.25 and metalness 0.0 explicitly on every balloon \u2014 shiny latex, never matte",
+    "Balloons clustered into a tight 3D bunch \u2014 overlapping, at varying heights and depths"
+  ],
+  "camera_config": {
+    "camera_position": [
+      2.5,
+      2.0,
+      2.5
+    ],
+    "camera_target": [
+      0,
+      0.5,
+      0
+    ],
+    "camera_basis": {
+      "world_x": "image right \u2014 objects at positive X appear to the right of the render",
+      "world_y": "image up \u2014 objects at positive Y appear higher in the render",
+      "world_z": "image depth \u2014 positive Z goes INTO the screen (further from camera)"
+    },
+    "derived_rules": [
+      "Bunch hangs in the air: balloon centres between y=0.1 and y=1.6, strings dangle below (y<0)",
+      "Cluster is roughly centred at x=0, z=0 \u2014 balloons spread in all directions (X, Y, Z)",
+      "No group.rotation \u2014 geometry is already in correct orientation for this camera"
+    ]
+  },
+  "expected_arrangement": {
+    "primary_mesh_name": "balloon",
+    "body_count": 12,
+    "row_count": 1,
+    "bodies_per_row": 12,
+    "row_axis": "y",
+    "row_spread_axis": "xz",
+    "description": "12 balloons loosely clustered in a 3D bunch \u2014 varying heights and depths, not a strict grid"
+  },
+  "expected_mesh_types": {
+    "balloon": "balloon",
+    "string": "string"
+  },
+  "expected_material_properties": {
+    "roughness_min": 0.04,
+    "roughness_max": 0.4
+  },
+  "expected_proportions": {
+    "height_to_width_ratio": [
+      0.8,
+      2.2
+    ]
+  },
+  "pixel_targets": {
+    "arc_depth_ratio_min": 0.05,
+    "coverage_asymmetry_max": 0.35
+  },
+  "expected_color_hsv": {
+    "hue_center": 220.0,
+    "hue_tolerance": 60.0,
+    "saturation_min": 0.38,
+    "_auto_calibrated": true
+  }
 }

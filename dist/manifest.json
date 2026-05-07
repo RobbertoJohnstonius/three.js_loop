@@ -11,11 +11,31 @@
   },
   {
     "asset_name": "boab_tree",
+    "version": "v5",
+    "score": 1.0,
+    "timestamp": "2026-05-07T07:21:27.787501",
+    "description": "Australian boab tree: fat squat barrel trunk (max diameter \u2248 trunk height, widest near mid-trunk), crown branches spreading nearly horizontally at ~60\u00b0 from vertical connecting trunk to canopy, wide flat leaf canopy at branch tips, pale grey-brown bark with vertex color variation, green leaf clusters at branch endpoints \u2014 branches must visually connect the trunk crown to the canopy (no floating gap)",
+    "triangle_count": 1592,
+    "has_normals": true,
+    "has_uvs": true
+  },
+  {
+    "asset_name": "banana_bunch",
+    "version": "v5",
+    "score": 1.0,
+    "timestamp": "2026-05-07T10:42:23.263629",
+    "description": "a hand of 5 ripe yellow bananas joined at a green-brown stem at the top; bananas are arrayed SIDE-BY-SIDE along the X axis (NOT radially) \u2014 all curve in the same Y-Z direction: forward then downward, like fingers on a hand. Each banana is a custom capped tube (buildCappedTube) with Frenet frames; bright yellow vertex colors; small dark brown icosphere tips; green-brown cylindrical stem. Critical: winding for side quads is push(a,d,c, a,b,d) \u2014 never push(a,c,d, a,d,b). Never use TubeGeometry.",
+    "triangle_count": 668,
+    "has_normals": true,
+    "has_uvs": true
+  },
+  {
+    "asset_name": "balloon_bunch",
     "version": "v4",
     "score": 1.0,
-    "timestamp": "2026-05-06T22:01:35.106574",
-    "description": "a boab tree: massive bottle-shaped grey trunk that swells wide at mid-height and tapers at base and top, short stubby branches spreading outward near the crown, small clusters of leaves at branch tips, smooth pale grey bark with subtle texture variation",
-    "triangle_count": 768,
+    "timestamp": "2026-05-07T22:03:45.380258",
+    "description": "A bunch of 12 colorful party balloons \u2014 red, orange, yellow, green, teal, blue, purple, magenta, white \u2014 clustered tightly together with strings hanging below, low-poly game asset",
+    "triangle_count": 960,
     "has_normals": true,
     "has_uvs": true
   }
