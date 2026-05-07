@@ -1,10 +1,10 @@
 {
   "asset_name": "balloon_bunch",
-  "version": "v4",
+  "version": "v11",
   "score": 1.0,
-  "timestamp": "2026-05-07T22:03:45.380258",
+  "timestamp": "2026-05-08T07:10:36.452683",
   "description": "A bunch of 12 colorful party balloons \u2014 red, orange, yellow, green, teal, blue, purple, magenta, white \u2014 clustered tightly together with strings hanging below, low-poly game asset",
-  "triangle_count": 960,
+  "triangle_count": 720,
   "has_normals": true,
   "has_uvs": true
 }

@@ -3,7 +3,7 @@
   "render_style": "low-poly",
   "texture_style": "vertex-color",
   "target_game": "fantasy RPG with a Three.js/Vite renderer",
-  "poly_target": "300\u2013800 triangles \u2014 enough surface detail to read well from game camera distance, not so many that it is expensive",
+  "poly_target": "up to 3000 triangles \u2014 smooth balloons need more geometry than a typical low-poly asset",
   "material_style": "MeshStandardMaterial with roughness 0.05\u20130.35 (shiny latex), metalness 0.0 \u2014 balloons are glossy rubber, NOT matte",
   "size_reference": "asset should fit inside a 2\u00d72\u00d72 unit bounding box",
   "emissive": false,
@@ -41,12 +41,12 @@
   },
   "expected_arrangement": {
     "primary_mesh_name": "balloon",
-    "body_count": 12,
+    "body_count": 9,
     "row_count": 1,
-    "bodies_per_row": 12,
+    "bodies_per_row": 9,
     "row_axis": "y",
     "row_spread_axis": "xz",
-    "description": "12 balloons loosely clustered in a 3D bunch \u2014 varying heights and depths, not a strict grid"
+    "description": "9 balloons loosely clustered in a tight 3D bunch \u2014 rigid sticks hold them at similar heights"
   },
   "expected_mesh_types": {
     "balloon": "balloon",
@@ -71,5 +71,45 @@
     "hue_tolerance": 60.0,
     "saturation_min": 0.38,
     "_auto_calibrated": true
-  }
+  },
+  "expected_cluster_density_max": 0.45,
+  "expected_silhouette_hw_ratio": {
+    "min": 0.6,
+    "max": 1.6
+  },
+  "reference_spec": {
+    "_checksum": "1190a057f86c03a9",
+    "_asset": "balloon_bunch",
+    "count_and_identity": {
+      "object_type": "balloons",
+      "object_count": 9,
+      "confidence": "high",
+      "notes": "Nine distinct balloons on rigid white sticks. User confirmed count=9."
+    },
+    "shape_and_proportions": {
+      "overall_shape": "spherical cluster",
+      "height_to_width_ratio": "roughly 1:1",
+      "silhouette_description": "a group of overlapping circles forming a rounded mass",
+      "dominant_axis": "roughly_equal"
+    },
+    "attachment_and_connection": {
+      "connector_type": "rigid_stick",
+      "connector_description": "Rigid white sticks, one per balloon, going straight down from the balloon bottom. Sticks do NOT converge to a single point.",
+      "all_at_same_height": false,
+      "attachment_point": "bottom"
+    },
+    "spatial_arrangement": {
+      "arrangement_type": "cluster",
+      "density": "tightly_packed",
+      "height_variation": "slight_variation",
+      "depth_variation": "some_depth"
+    },
+    "surface_and_material": {
+      "surface_finish": "glossy",
+      "texture_type": "smooth",
+      "has_texture_map": false,
+      "color_description": "green, blue, red, purple, yellow, orange"
+    }
+  },
+  "min_reference_similarity_to_pass": 7
 }

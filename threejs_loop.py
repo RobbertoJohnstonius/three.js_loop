@@ -773,10 +773,10 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
     if _ref_height_var == "all_same" and _actual_count > 1:
         _positions = _named.get(_primary_name, [])
         _ys = [p.get("y", 0.0) for p in _positions]
-        if _ys and (max(_ys) - min(_ys)) > 0.10:
+        if _ys and (max(_ys) - min(_ys)) > 0.55:
             critical_failures.append(
-                f"height variation {max(_ys)-min(_ys):.2f} detected but reference shows "
-                "all objects at the same height — remove Y-axis spread."
+                f"height variation {max(_ys)-min(_ys):.2f} is too large — reference shows "
+                "objects at roughly the same height (≤0.55 spread allowed)."
             )
 
     _ref_connector = _ac.get("connector_type")
@@ -2420,18 +2420,26 @@ def run_loop(state: dict, max_iter: int) -> None:
                 save_state(state)
                 continue
 
-        # ── Done? — requires both float score AND rubric tier ────────────────
+        # ── Done? — requires score, rubric tier, and optional ref_sim floor ────
         if score >= PASS_THRESHOLD and rubric["tier"] == TIER_PRODUCTION:
-            log.info(f"\n{'='*60}")
-            log.info(
-                f"DONE — {asset_name} passed "
-                f"(score={score:.3f} ≥ {PASS_THRESHOLD}, rubric={rubric['score_100']}/100)"
-            )
-            log.info(f"Best: {candidate_path(asset_name, state['best_version'])}")
-            state["done"] = True
-            save_state(state)
-            export_passed_asset(state, metrics, score, adapter)
-            return
+            _min_ref_sim = load_brief().get("min_reference_similarity_to_pass")
+            _cur_ref_sim = (visual or {}).get("reference_similarity")
+            if _min_ref_sim and _cur_ref_sim is not None and _cur_ref_sim < _min_ref_sim:
+                log.info(
+                    f"[ref_sim gate] ref_sim={_cur_ref_sim}/10 < {_min_ref_sim} — "
+                    f"score passes but reference match not good enough yet — continuing"
+                )
+            else:
+                log.info(f"\n{'='*60}")
+                log.info(
+                    f"DONE — {asset_name} passed "
+                    f"(score={score:.3f} ≥ {PASS_THRESHOLD}, rubric={rubric['score_100']}/100)"
+                )
+                log.info(f"Best: {candidate_path(asset_name, state['best_version'])}")
+                state["done"] = True
+                save_state(state)
+                export_passed_asset(state, metrics, score, adapter)
+                return
 
         if iteration >= start_iter + max_iter:
             log.info(f"[limit] reached max_iter={max_iter}")

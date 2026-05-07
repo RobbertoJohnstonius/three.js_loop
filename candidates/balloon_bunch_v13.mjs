@@ -3,7 +3,7 @@ import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export function createAsset() {
     const radius = 0.15;
-    const detail = 3; // Increase detail parameter to 3
+    const detail = 1; // Update detail parameter from 0 to 1
 
     // 9 exact colors matching reference photo
     const balloonColors = [

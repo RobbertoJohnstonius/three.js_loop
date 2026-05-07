@@ -3,7 +3,7 @@ import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export function createAsset() {
     const radius = 0.15;
-    const detail = 3; // Increase detail parameter to 3
+    const detail = 2; // Increase detail parameter to 2
 
     // 9 exact colors matching reference photo
     const balloonColors = [
@@ -35,7 +35,7 @@ export function createAsset() {
 
     const material = new THREE.MeshStandardMaterial({
         color: 0xffffff,
-        roughness: 0.10,
+        roughness: 0.85, // Adjusted roughness
         metalness: 0.0,
         vertexColors: true,
     });
