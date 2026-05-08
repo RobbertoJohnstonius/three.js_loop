@@ -1331,6 +1331,31 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
         if tier == TIER_PRODUCTION:
             tier = TIER_POLISH
 
+    # ── G: Extended brief part checks (Phase 7) — polish_items only ─────────
+    # Per-part color coverage from the programmatic color-zone comparator.
+    # Low coverage for a high-saturation expected part → missing or wrong color.
+    try:
+        from reference_analyst import load_extended_brief
+        _eb = load_extended_brief()
+        _cz = (analysis.get("pixel_metrics") or {}).get("color_zones", {})
+        _eb_spec = _eb.get("geometry_spec_generated", {})
+        for _pname, _pspec in _eb_spec.items():
+            _rgb = _pspec.get("dominant_rgb_01", [])
+            if len(_rgb) < 3:
+                continue
+            import colorsys as _cs
+            _h, _s, _v = _cs.rgb_to_hsv(_rgb[0], _rgb[1], _rgb[2])
+            if _s < 0.15:
+                continue   # skip greys
+            _cov = _cz.get(_pname)
+            if _cov is not None and _cov < 0.03:
+                polish_items.append(
+                    f"part '{_pname}' expected color rgb({_rgb[0]:.2f},{_rgb[1]:.2f},{_rgb[2]:.2f}) "
+                    f"covers only {_cov:.1%} of render pixels — color may be missing or wrong"
+                )
+    except Exception:
+        pass
+
     # Brief-driven texture requirements — demote to POLISH so loop keeps iterating
     brief = load_brief()
     if (
@@ -1775,10 +1800,19 @@ Return ONLY valid JSON:
             result["reference_count_match"]  = ref_cmp.get("reference_count_match")
             result["reference_critical_gap"] = ref_cmp.get("reference_critical_gap")
 
-        # Feature checklist — per-feature visual fidelity check
+        # Feature checklist — merge brief.json (manual, authoritative) with
+        # extended_brief (auto-generated from reference image analysis).
+        # brief.json takes precedence on key collisions.
         checklist = load_brief().get("feature_checklist", {})
-        if checklist:
-            result["feature_check"] = run_feature_checklist(stitched_path, checklist)
+        try:
+            from reference_analyst import load_extended_brief
+            _eb_cl = load_extended_brief().get("feature_checklist_generated", {})
+            # Only add generated questions for parts not already in the manual checklist
+            merged_checklist = {**_eb_cl, **checklist}
+        except Exception:
+            merged_checklist = checklist
+        if merged_checklist:
+            result["feature_check"] = run_feature_checklist(stitched_path, merged_checklist)
 
     return result
 
@@ -2239,6 +2273,16 @@ def run_coder(
     rules_block = _build_rules_block(rules)
     brief_block = _brief_block(brief)
 
+    # Phase 7: inject extended geometry table from reference analyst
+    extended_geo_block = ""
+    try:
+        from reference_analyst import load_extended_brief, format_geometry_table
+        _eb = load_extended_brief()
+        if _eb.get("geometry_spec_generated"):
+            extended_geo_block = "\n" + format_geometry_table(_eb) + "\n"
+    except Exception:
+        pass
+
     alt_constraint = ""
     if variant == "B":
         alt_constraint = (
@@ -2265,7 +2309,7 @@ def run_coder(
 IMPROVEMENT [{variant}]: {plan.get('title', 'general improvement')}
 INSTRUCTION: {plan.get('instruction', 'improve quality')}
 {alt_constraint}
-{brief_block}{ref_note}
+{extended_geo_block}{brief_block}{ref_note}
 
 PERMANENT RULES (must follow):
 {rules_block}
@@ -2670,6 +2714,15 @@ def run_loop(state: dict, max_iter: int) -> None:
     ref_path_for_spec = find_reference(asset_name)
     if ref_path_for_spec:
         build_reference_spec(asset_name, ref_path_for_spec)
+
+    # Phase 7: build extended brief (cached by ref SHA256 in extended_brief.json)
+    if ref_path_for_spec:
+        try:
+            from reference_analyst import build_extended_brief
+            _eb = build_extended_brief(asset_name, ref_path_for_spec, load_brief())
+            log.info(f"[extended-brief] {_eb.get('part_count', 0)} parts identified")
+        except Exception as _ebe:
+            log.warning(f"[extended-brief] build failed (non-fatal): {_ebe}")
 
     start_iter = state["iteration"]
 

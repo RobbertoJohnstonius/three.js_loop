@@ -1,0 +1,920 @@
+{
+  "_ref_sha": "2efd7f8603c3a7aa",
+  "_asset": "croc_pistol",
+  "_generated_at": "2026-05-08T21:09:33.425886",
+  "silhouette": {
+    "ok": true,
+    "image_wh": [
+      1380,
+      752
+    ],
+    "object_bbox_px": [
+      180,
+      38,
+      1180,
+      704
+    ],
+    "aspect_ratio": 1.676,
+    "fill_fraction": 0.25,
+    "dominant_palette_rgb": [
+      [
+        147,
+        155,
+        93
+      ],
+      [
+        109,
+        155,
+        137
+      ],
+      [
+        160,
+        100,
+        65
+      ],
+      [
+        47,
+        62,
+        72
+      ],
+      [
+        59,
+        81,
+        56
+      ],
+      [
+        50,
+        48,
+        62
+      ],
+      [
+        63,
+        48,
+        53
+      ],
+      [
+        56,
+        45,
+        58
+      ]
+    ]
+  },
+  "parts": [
+    {
+      "name": "body",
+      "bbox_px": [
+        50,
+        145,
+        550,
+        200
+      ],
+      "dominant_color": "green",
+      "dominant_rgb": [
+        0,
+        128,
+        0
+      ],
+      "geometry_hint": "custom",
+      "description": "The main body of the gun with scales and designs.",
+      "detail": {
+        "geometry_primitive": "custom",
+        "dominant_rgb": [
+          87,
+          168,
+          173
+        ],
+        "secondary_rgb": [
+          237,
+          201,
+          75
+        ],
+        "color_gradient": "none",
+        "has_detail_texture": true,
+        "texture_description": "crocodile scales, rope braid",
+        "roughness_estimate": "glossy",
+        "is_metallic": true,
+        "emissive_hint": false,
+        "visible_sub_features": [
+          "gemstone",
+          "engraving",
+          "lettering"
+        ]
+      }
+    },
+    {
+      "name": "croc_defense_label",
+      "bbox_px": [
+        220,
+        90,
+        150,
+        20
+      ],
+      "dominant_color": "green",
+      "dominant_rgb": [
+        0,
+        128,
+        0
+      ],
+      "geometry_hint": "flat_strip",
+      "description": "Label on the side of the gun that says 'CROC DEFENSE'.",
+      "detail": {
+        "geometry_primitive": "custom",
+        "dominant_rgb": [
+          128,
+          255,
+          0
+        ],
+        "secondary_rgb": null,
+        "color_gradient": "none",
+        "has_detail_texture": true,
+        "texture_description": "crocodile scales",
+        "roughness_estimate": "matte",
+        "is_metallic": false,
+        "emissive_hint": false,
+        "visible_sub_features": [
+          "engraving"
+        ]
+      }
+    },
+    {
+      "name": "golden_ornament",
+      "bbox_px": [
+        420,
+        100,
+        200,
+        40
+      ],
+      "dominant_color": "gold",
+      "dominant_rgb": [
+        255,
+        215,
+        0
+      ],
+      "geometry_hint": "custom",
+      "description": "Golden ornamental design on the side of the gun.",
+      "detail": {
+        "geometry_primitive": "custom",
+        "dominant_rgb": [
+          218,
+          165,
+          32
+        ],
+        "secondary_rgb": [
+          139,
+          69,
+          19
+        ],
+        "color_gradient": "none",
+        "has_detail_texture": true,
+        "texture_description": "scrollwork engraving",
+        "roughness_estimate": "glossy",
+        "is_metallic": true,
+        "emissive_hint": false,
+        "visible_sub_features": [
+          "intricate designs",
+          "celtic patterns"
+        ]
+      }
+    },
+    {
+      "name": "spike",
+      "bbox_px": [
+        180,
+        20,
+        400,
+        20
+      ],
+      "dominant_color": "orange",
+      "dominant_rgb": [
+        255,
+        140,
+        0
+      ],
+      "geometry_hint": "custom",
+      "description": "Row of spikes on top of the gun.",
+      "detail": {
+        "geometry_primitive": "custom",
+        "dominant_rgb": [
+          128,
+          128,
+          128
+        ],
+        "secondary_rgb": null,
+        "color_gradient": "none",
+        "has_detail_texture": false,
+        "texture_description": null,
+        "roughness_estimate": "glossy",
+        "is_metallic": true,
+        "emissive_hint": false,
+        "visible_sub_features": [
+          "angular edges",
+          "stealthy design"
+        ]
+      }
+    },
+    {
+      "name": "sight",
+      "bbox_px": [
+        110,
+        70,
+        20,
+        20
+      ],
+      "dominant_color": "grey",
+      "dominant_rgb": [
+        128,
+        128,
+        128
+      ],
+      "geometry_hint": "cylinder",
+      "description": "Front sight of the gun.",
+      "detail": {}
+    },
+    {
+      "name": "rear_sight",
+      "bbox_px": [
+        150,
+        70,
+        30,
+        30
+      ],
+      "dominant_color": "grey",
+      "dominant_rgb": [
+        128,
+        128,
+        128
+      ],
+      "geometry_hint": "cylinder",
+      "description": "Rear sight of the gun.",
+      "detail": {}
+    },
+    {
+      "name": "trigger",
+      "bbox_px": [
+        100,
+        250,
+        40,
+        30
+      ],
+      "dominant_color": "grey",
+      "dominant_rgb": [
+        128,
+        128,
+        128
+      ],
+      "geometry_hint": "cylinder",
+      "description": "Trigger of the gun.",
+      "detail": {}
+    },
+    {
+      "name": "trigger_guard",
+      "bbox_px": [
+        80,
+        280,
+        60,
+        40
+      ],
+      "dominant_color": "grey",
+      "dominant_rgb": [
+        128,
+        128,
+        128
+      ],
+      "geometry_hint": "cylinder",
+      "description": "Trigger guard of the gun.",
+      "detail": {
+        "geometry_primitive": "box",
+        "dominant_rgb": [
+          128,
+          128,
+          128
+        ],
+        "secondary_rgb": null,
+        "color_gradient": "none",
+        "has_detail_texture": false,
+        "texture_description": null,
+        "roughness_estimate": "matte",
+        "is_metallic": false,
+        "emissive_hint": false,
+        "visible_sub_features": []
+      }
+    },
+    {
+      "name": "gemstone",
+      "bbox_px": [
+        290,
+        140,
+        30,
+        30
+      ],
+      "dominant_color": "purple",
+      "dominant_rgb": [
+        128,
+        0,
+        128
+      ],
+      "geometry_hint": "custom",
+      "description": "Gemstone on the side of the gun.",
+      "detail": {}
+    },
+    {
+      "name": "cord",
+      "bbox_px": [
+        320,
+        230,
+        20,
+        100
+      ],
+      "dominant_color": "multicolor",
+      "dominant_rgb": [
+        255,
+        0,
+        0
+      ],
+      "geometry_hint": "tube",
+      "description": "Cord hanging from the gun.",
+      "detail": {
+        "geometry_primitive": "cylinder",
+        "dominant_rgb": [
+          128,
+          255,
+          0
+        ],
+        "secondary_rgb": null,
+        "color_gradient": "none",
+        "has_detail_texture": true,
+        "texture_description": "rope braid",
+        "roughness_estimate": "matte",
+        "is_metallic": false,
+        "emissive_hint": false,
+        "visible_sub_features": [
+          "nodules",
+          "twist"
+        ]
+      }
+    },
+    {
+      "name": "magazine",
+      "bbox_px": [
+        680,
+        150,
+        50,
+        30
+      ],
+      "dominant_color": "grey",
+      "dominant_rgb": [
+        128,
+        128,
+        128
+      ],
+      "geometry_hint": "box",
+      "description": "Magazine of the gun.",
+      "detail": {}
+    },
+    {
+      "name": "button",
+      "bbox_px": [
+        530,
+        200,
+        20,
+        20
+      ],
+      "dominant_color": "grey",
+      "dominant_rgb": [
+        128,
+        128,
+        128
+      ],
+      "geometry_hint": "cylinder",
+      "description": "Button on the side of the gun.",
+      "detail": {}
+    },
+    {
+      "name": "golden_handle",
+      "bbox_px": [
+        110,
+        380,
+        80,
+        50
+      ],
+      "dominant_color": "gold",
+      "dominant_rgb": [
+        255,
+        215,
+        0
+      ],
+      "geometry_hint": "custom",
+      "description": "Golden handle of the gun.",
+      "detail": {
+        "geometry_primitive": "box",
+        "dominant_rgb": [
+          128,
+          128,
+          128
+        ],
+        "secondary_rgb": null,
+        "color_gradient": "none",
+        "has_detail_texture": false,
+        "texture_description": null,
+        "roughness_estimate": "matte",
+        "is_metallic": false,
+        "emissive_hint": false,
+        "visible_sub_features": [
+          "grid pattern"
+        ]
+      }
+    },
+    {
+      "name": "loop",
+      "bbox_px": [
+        120,
+        20,
+        30,
+        30
+      ],
+      "dominant_color": "brown",
+      "dominant_rgb": [
+        165,
+        42,
+        42
+      ],
+      "geometry_hint": "torus",
+      "description": "Loop on the back of the gun.",
+      "detail": {}
+    },
+    {
+      "name": "barrel",
+      "bbox_px": [
+        400,
+        90,
+        200,
+        20
+      ],
+      "dominant_color": "grey",
+      "dominant_rgb": [
+        128,
+        128,
+        128
+      ],
+      "geometry_hint": "cylinder",
+      "description": "Barrel of the gun.",
+      "detail": {
+        "geometry_primitive": "cylinder",
+        "dominant_rgb": [
+          171,
+          255,
+          0
+        ],
+        "secondary_rgb": null,
+        "color_gradient": "none",
+        "has_detail_texture": true,
+        "texture_description": "scrollwork engraving",
+        "roughness_estimate": "satin",
+        "is_metallic": true,
+        "emissive_hint": false,
+        "visible_sub_features": [
+          "etched pattern",
+          "rounded edges"
+        ]
+      }
+    }
+  ],
+  "part_count": 15,
+  "geometry_spec_generated": {
+    "body": {
+      "primitive": "custom",
+      "world_pos": [
+        -0.754,
+        0.246,
+        0.0
+      ],
+      "world_size": [
+        0.932,
+        0.339,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.341,
+        0.659,
+        0.678
+      ],
+      "secondary_rgb_01": [
+        0.929,
+        0.788,
+        0.294
+      ],
+      "color_gradient": "none",
+      "roughness": 0.15,
+      "metalness": 0.75,
+      "emissive": false,
+      "has_texture": true,
+      "texture_desc": "crocodile scales, rope braid",
+      "sub_features": [
+        "gemstone",
+        "engraving",
+        "lettering"
+      ]
+    },
+    "croc_defense_label": {
+      "primitive": "custom",
+      "world_pos": [
+        -0.805,
+        0.492,
+        0.0
+      ],
+      "world_size": [
+        0.254,
+        0.034,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        1.0,
+        0.0
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.45,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": true,
+      "texture_desc": "crocodile scales",
+      "sub_features": [
+        "engraving"
+      ]
+    },
+    "golden_ornament": {
+      "primitive": "custom",
+      "world_pos": [
+        -0.424,
+        0.458,
+        0.0
+      ],
+      "world_size": [
+        0.339,
+        0.068,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.855,
+        0.647,
+        0.125
+      ],
+      "secondary_rgb_01": [
+        0.545,
+        0.271,
+        0.075
+      ],
+      "color_gradient": "none",
+      "roughness": 0.15,
+      "metalness": 0.75,
+      "emissive": false,
+      "has_texture": true,
+      "texture_desc": "scrollwork engraving",
+      "sub_features": [
+        "intricate designs",
+        "celtic patterns"
+      ]
+    },
+    "spike": {
+      "primitive": "custom",
+      "world_pos": [
+        -0.661,
+        0.61,
+        0.0
+      ],
+      "world_size": [
+        0.678,
+        0.034,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.502,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.15,
+      "metalness": 0.75,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": [
+        "angular edges",
+        "stealthy design"
+      ]
+    },
+    "sight": {
+      "primitive": "cylinder",
+      "world_pos": [
+        -1.102,
+        0.525,
+        0.0
+      ],
+      "world_size": [
+        0.034,
+        0.034,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.502,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.28,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": []
+    },
+    "rear_sight": {
+      "primitive": "cylinder",
+      "world_pos": [
+        -1.025,
+        0.517,
+        0.0
+      ],
+      "world_size": [
+        0.051,
+        0.051,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.502,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.28,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": []
+    },
+    "trigger": {
+      "primitive": "cylinder",
+      "world_pos": [
+        -1.102,
+        0.212,
+        0.0
+      ],
+      "world_size": [
+        0.068,
+        0.051,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.502,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.28,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": []
+    },
+    "trigger_guard": {
+      "primitive": "box",
+      "world_pos": [
+        -1.119,
+        0.153,
+        0.0
+      ],
+      "world_size": [
+        0.102,
+        0.068,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.502,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.45,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": []
+    },
+    "gemstone": {
+      "primitive": "custom",
+      "world_pos": [
+        -0.788,
+        0.398,
+        0.0
+      ],
+      "world_size": [
+        0.051,
+        0.051,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.0,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.28,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": []
+    },
+    "cord": {
+      "primitive": "cylinder",
+      "world_pos": [
+        -0.746,
+        0.186,
+        0.0
+      ],
+      "world_size": [
+        0.034,
+        0.169,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        1.0,
+        0.0
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.45,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": true,
+      "texture_desc": "rope braid",
+      "sub_features": [
+        "nodules",
+        "twist"
+      ]
+    },
+    "magazine": {
+      "primitive": "box",
+      "world_pos": [
+        -0.11,
+        0.381,
+        0.0
+      ],
+      "world_size": [
+        0.085,
+        0.051,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.502,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.28,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": []
+    },
+    "button": {
+      "primitive": "cylinder",
+      "world_pos": [
+        -0.39,
+        0.305,
+        0.0
+      ],
+      "world_size": [
+        0.034,
+        0.034,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.502,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.28,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": []
+    },
+    "golden_handle": {
+      "primitive": "box",
+      "world_pos": [
+        -1.051,
+        -0.025,
+        0.0
+      ],
+      "world_size": [
+        0.136,
+        0.085,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.502,
+        0.502,
+        0.502
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.45,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": [
+        "grid pattern"
+      ]
+    },
+    "loop": {
+      "primitive": "torus",
+      "world_pos": [
+        -1.076,
+        0.602,
+        0.0
+      ],
+      "world_size": [
+        0.051,
+        0.051,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.647,
+        0.165,
+        0.165
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.28,
+      "metalness": 0.1,
+      "emissive": false,
+      "has_texture": false,
+      "texture_desc": null,
+      "sub_features": []
+    },
+    "barrel": {
+      "primitive": "cylinder",
+      "world_pos": [
+        -0.458,
+        0.492,
+        0.0
+      ],
+      "world_size": [
+        0.339,
+        0.034,
+        0.44
+      ],
+      "dominant_rgb_01": [
+        0.671,
+        1.0,
+        0.0
+      ],
+      "secondary_rgb_01": null,
+      "color_gradient": "none",
+      "roughness": 0.28,
+      "metalness": 0.75,
+      "emissive": false,
+      "has_texture": true,
+      "texture_desc": "scrollwork engraving",
+      "sub_features": [
+        "etched pattern",
+        "rounded edges"
+      ]
+    }
+  },
+  "feature_checklist_generated": {
+    "body": "Is there a green body featuring crocodile scales, rope braid? (The main body of the gun with scales and designs)",
+    "croc_defense_label": "Is there a green croc defense label featuring crocodile scales? (Label on the side of the gun that says 'CROC DEFENSE')",
+    "golden_ornament": "Is there a gold golden ornament featuring scrollwork engraving? (Golden ornamental design on the side of the gun)",
+    "spike": "Is there a orange spike? (Row of spikes on top of the gun)",
+    "sight": "Is there a grey sight? (Front sight of the gun)",
+    "rear_sight": "Is there a grey rear sight? (Rear sight of the gun)",
+    "trigger": "Is there a grey trigger? (Trigger of the gun)",
+    "trigger_guard": "Is there a grey trigger guard? (Trigger guard of the gun)",
+    "gemstone": "Is there a purple gemstone? (Gemstone on the side of the gun)",
+    "cord": "Is there a multicolor cord featuring rope braid? (Cord hanging from the gun)",
+    "magazine": "Is there a grey magazine? (Magazine of the gun)",
+    "button": "Is there a grey button? (Button on the side of the gun)",
+    "golden_handle": "Is there a gold golden handle? (Golden handle of the gun)",
+    "loop": "Is there a brown loop? (Loop on the back of the gun)",
+    "barrel": "Is there a grey barrel featuring scrollwork engraving? (Barrel of the gun)"
+  }
+}

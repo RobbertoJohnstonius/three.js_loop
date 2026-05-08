@@ -137,7 +137,7 @@ class ThreeJSAdapter:
 
     # ── Stage 3b: pixel statistics ────────────────────────────────────────────
 
-    def analyze_screenshot(self, screenshot_path: Path) -> dict:
+    def analyze_screenshot(self, screenshot_path: Path, ref_path: Path | None = None) -> dict:
         """
         Programmatic analysis of a PNG. No LLM required.
         Background colour: BACKGROUND_COLOR_RGB.
@@ -148,7 +148,7 @@ class ThreeJSAdapter:
         try:
             from PIL import Image
             img = Image.open(screenshot_path).convert("RGB")
-            return self._analyze_image(img)
+            return self._analyze_image(img, ref_path=ref_path)
         except ImportError:
             return {
                 "render_ok": True,
@@ -160,7 +160,7 @@ class ThreeJSAdapter:
         except Exception as e:
             return {"render_ok": False, "error": str(e)}
 
-    def _analyze_image(self, img) -> dict:
+    def _analyze_image(self, img, ref_path: Path | None = None) -> dict:
         """Pixel statistics on an in-memory PIL Image."""
         import numpy as np
         w, h = img.size
@@ -194,6 +194,17 @@ class ThreeJSAdapter:
             dark_patch_fraction = 0.0
 
         pixel_metrics = self._measure_shape_metrics(arr, bg_mask, w, h)
+
+        # Item 1 — reference pixel similarity (histogram intersection, pose-invariant)
+        if ref_path is not None:
+            rps = self._compute_ref_pixel_sim(ref_path, arr, bg_mask)
+            if rps is not None:
+                pixel_metrics["ref_pixel_sim"] = rps
+
+        # Item 2 — palette colour count (distinct hue clusters in the render)
+        phc = self._count_palette_hues(arr, bg_mask)
+        if phc is not None:
+            pixel_metrics["palette_distinct_hues"] = phc
 
         return {
             "render_ok":            coverage > 0.02,
@@ -267,6 +278,17 @@ class ThreeJSAdapter:
         if color_zone_boundary is not None:
             result["color_zone_boundary"] = color_zone_boundary
 
+        # Specular highlight detection — fraction of object pixels above 215/255 luminance.
+        # Glossy surfaces (roughness ≤ 0.25) produce concentrated bright spots; matte surfaces
+        # spread specular energy so widely no individual pixel reaches this threshold.
+        try:
+            obj_pixels = arr[~bg_mask].astype(np.float32)
+            if len(obj_pixels) > 200:
+                lum = 0.299 * obj_pixels[:, 0] + 0.587 * obj_pixels[:, 1] + 0.114 * obj_pixels[:, 2]
+                result["highlight_fraction"] = round(float((lum > 215.0).sum()) / len(lum), 4)
+        except Exception:
+            pass
+
         # HSV color statistics for hue validation
         try:
             import colorsys
@@ -321,6 +343,159 @@ class ThreeJSAdapter:
             logging.warning(f"compute_silhouette_metrics failed: {e}")
             return {}
 
+    # ── Item 1: Reference pixel similarity ───────────────────────────────────
+
+    def _compute_ref_pixel_sim(self, ref_path: Path, arr, bg_mask) -> float | None:
+        """
+        Hue-histogram intersection between render and reference image.
+        Pose-invariant: compares colour distributions, not pixel positions.
+        Returns [0, 1] — 1.0 means identical hue distribution.
+        """
+        try:
+            from PIL import Image
+            import numpy as np
+
+            ref_img = Image.open(ref_path).convert("RGB")
+            ref_arr = np.array(ref_img, dtype=np.float32)
+
+            # Detect reference background from corners (photo may have any background)
+            corners = np.concatenate([
+                ref_arr[:20, :20].reshape(-1, 3),   ref_arr[:20, -20:].reshape(-1, 3),
+                ref_arr[-20:, :20].reshape(-1, 3),  ref_arr[-20:, -20:].reshape(-1, 3),
+            ])
+            ref_bg = corners.mean(axis=0)
+            ref_bg_mask = np.all(np.abs(ref_arr - ref_bg) < 40, axis=2)
+
+            def _hue_hist(image_arr, mask, n_bins=36):
+                px = image_arr[~mask].astype(np.float32) / 255.0
+                if len(px) < 100:
+                    return None
+                R, G, B = px[:, 0], px[:, 1], px[:, 2]
+                maxc = np.maximum(np.maximum(R, G), B)
+                minc = np.minimum(np.minimum(R, G), B)
+                delta = maxc - minc
+                # Only saturated, mid-brightness pixels carry meaningful hue
+                valid = (delta > 0.08) & (maxc > 0.08) & (maxc < 0.97)
+                if valid.sum() < 50:
+                    return None
+                R, G, B, maxc, delta = R[valid], G[valid], B[valid], maxc[valid], delta[valid]
+                hue = np.zeros(valid.sum())
+                mr = maxc == R; mg = maxc == G; mb = maxc == B
+                hue[mr] = ((G[mr] - B[mr]) / delta[mr]) % 6
+                hue[mg] = (B[mg] - R[mg]) / delta[mg] + 2
+                hue[mb] = (R[mb] - G[mb]) / delta[mb] + 4
+                hue = hue / 6.0  # normalise to [0, 1]
+                hist, _ = np.histogram(hue, bins=n_bins, range=(0.0, 1.0))
+                return hist.astype(np.float64)
+
+            h_render = _hue_hist(arr, bg_mask)
+            h_ref    = _hue_hist(ref_arr, ref_bg_mask)
+            if h_render is None or h_ref is None:
+                return None
+
+            h_render /= h_render.sum() + 1e-9
+            h_ref    /= h_ref.sum()    + 1e-9
+            intersection = float(np.minimum(h_render, h_ref).sum())
+            return round(intersection, 4)
+
+        except Exception as e:
+            logging.debug(f"ref_pixel_sim failed: {e}")
+            return None
+
+    # ── Item 2: Palette colour count ─────────────────────────────────────────
+
+    def _count_palette_hues(self, arr, bg_mask) -> int | None:
+        """
+        Count distinct hue clusters visible in the render.
+        Each cluster = a meaningfully different colour (separated by ≥20°).
+        Returns None if there are not enough coloured pixels to measure.
+        """
+        try:
+            import numpy as np
+            px = arr[~bg_mask].astype(np.float32) / 255.0
+            if len(px) < 200:
+                return None
+            R, G, B = px[:, 0], px[:, 1], px[:, 2]
+            maxc = np.maximum(np.maximum(R, G), B)
+            minc = np.minimum(np.minimum(R, G), B)
+            delta = maxc - minc
+            # Require saturation > 0.08 and mid-brightness — filters grey/white/black
+            valid = (delta > 0.08) & (maxc > 0.08) & (maxc < 0.97)
+            if valid.sum() < 100:
+                return 0
+            R, G, B, maxc, delta = R[valid], G[valid], B[valid], maxc[valid], delta[valid]
+            hue = np.zeros(valid.sum())
+            mr = maxc == R; mg = maxc == G; mb = maxc == B
+            hue[mr] = ((G[mr] - B[mr]) / delta[mr]) % 6
+            hue[mg] = (B[mg] - R[mg]) / delta[mg] + 2
+            hue[mb] = (R[mb] - G[mb]) / delta[mb] + 4
+            hue_deg = hue * 60.0  # [0, 360]
+
+            # 36-bin histogram (10° per bin); each bin = one potential colour
+            hist, _ = np.histogram(hue_deg, bins=36, range=(0.0, 360.0))
+            frac = hist / (hist.sum() + 1e-9)
+
+            # Peak finding: bins with >3% share, not adjacent to a bigger peak (20° gap)
+            peaks = []
+            for i in np.argsort(-frac):
+                if frac[i] < 0.03:
+                    break
+                if not any(abs(i - p) <= 1 or abs(i - p) >= 35 for p in peaks):
+                    peaks.append(int(i))
+            return len(peaks)
+        except Exception:
+            return None
+
+    # ── Item 3: View consistency ──────────────────────────────────────────────
+
+    def _compute_view_consistency(self, angle_paths: dict) -> dict:
+        """
+        Check that key pixel metrics are consistent across all rendered angles.
+        A large coverage drop in one angle signals a back-of-object crack or missing geometry.
+        """
+        try:
+            from PIL import Image
+            import numpy as np
+            coverages, dark_fracs = [], []
+            angle_coverages = {}
+            # Exclude top-down ('t') — overhead views inherently show more coverage
+            # than side views; the difference is expected, not a defect.
+            side_angles = {k: v for k, v in angle_paths.items() if k != 't'}
+            for name, path in side_angles.items():
+                p = Path(path)
+                if not p.exists():
+                    continue
+                img = Image.open(p).convert("RGB")
+                m = self._analyze_image(img)
+                cov = m.get("coverage")
+                dpf = m.get("dark_patch_fraction")
+                if cov is not None:
+                    coverages.append(cov)
+                    angle_coverages[name] = round(cov, 3)
+                if dpf is not None:
+                    dark_fracs.append(dpf)
+
+            if len(coverages) < 2:
+                return {}
+
+            cov_arr = np.array(coverages)
+            cov_mean  = float(cov_arr.mean())
+            cov_range = float(cov_arr.max() - cov_arr.min())
+            # Normalise spread by mean — relative variation [0, 1]
+            rel_spread = cov_range / (cov_mean + 1e-6)
+            score = round(max(0.0, 1.0 - min(rel_spread, 1.0)), 3)
+
+            result: dict = {
+                "view_consistency_score": score,
+                "angle_coverages": angle_coverages,
+            }
+            if dark_fracs:
+                result["max_angle_dark_patch"] = round(max(dark_fracs), 4)
+            return result
+        except Exception as e:
+            logging.debug(f"view_consistency failed: {e}")
+            return {}
+
     # ── Full playtester run ───────────────────────────────────────────────────
 
     def run(self, asset_path: Path, version_tag: str) -> dict:
@@ -361,6 +536,13 @@ class ThreeJSAdapter:
             self._save_metrics(result, version_tag, ts)
             return result
 
+        # Derive reference image path for pixel similarity (Item 1)
+        import re as _re
+        _stem = Path(asset_path).stem
+        _asset_name = _re.sub(r'_v\d+.*$', '', _stem)
+        _ref_path = LOOP_DIR / 'references' / f'{_asset_name}.png'
+        ref_path: Path | None = _ref_path if _ref_path.exists() else None
+
         # Stage 2: multi-angle render
         output_base = SCREENSHOTS_DIR / f"{version_tag}_{ts}"
         render = self.render_multi_angle(asset_path, output_base)
@@ -380,13 +562,13 @@ class ThreeJSAdapter:
             result["stitched_path"] = str(stitched)
             result["screenshot_path"] = str(stitched)  # backward-compat alias
 
-        # Stage 3b: pixel analysis on the grid
+        # Stage 3b: pixel analysis on the grid (pass ref_path for Item 1)
         if stitched and stitched.exists():
-            result["screenshot_analysis"] = self.analyze_screenshot(stitched)
+            result["screenshot_analysis"] = self.analyze_screenshot(stitched, ref_path=ref_path)
         elif screenshots:
             first = Path(screenshots[0]["path"])
             if first.exists():
-                result["screenshot_analysis"] = self.analyze_screenshot(first)
+                result["screenshot_analysis"] = self.analyze_screenshot(first, ref_path=ref_path)
 
         # Stage 3c: silhouette metrics from front angle (Item 7)
         front_path = (result.get("angle_paths") or {}).get("f")
@@ -394,6 +576,25 @@ class ThreeJSAdapter:
             sil = self.compute_silhouette_metrics(Path(front_path))
             if sil and result.get("screenshot_analysis") is not None:
                 result["screenshot_analysis"].setdefault("pixel_metrics", {}).update(sil)
+
+        # Stage 3d: view consistency across all angles (Item 3)
+        if result.get("angle_paths"):
+            vc = self._compute_view_consistency(result["angle_paths"])
+            if vc and result.get("screenshot_analysis") is not None:
+                result["screenshot_analysis"].setdefault("pixel_metrics", {}).update(vc)
+
+        # Stage 3e: color-zone comparison vs extended_brief (Phase 7)
+        front_path_e = (result.get("angle_paths") or {}).get("f")
+        if front_path_e and Path(front_path_e).exists():
+            try:
+                from reference_analyst import load_extended_brief
+                eb = load_extended_brief()
+                if eb.get("geometry_spec_generated"):
+                    cz = self._check_color_zones(Path(front_path_e), eb)
+                    if cz and result.get("screenshot_analysis") is not None:
+                        result["screenshot_analysis"].setdefault("pixel_metrics", {}).update({"color_zones": cz})
+            except Exception as _cze:
+                logging.debug(f"color_zones failed: {_cze}")
 
         self._save_metrics(result, version_tag, ts)
         return result
@@ -435,6 +636,59 @@ class ThreeJSAdapter:
                 result["screenshot_analysis"] = self.analyze_screenshot(stitched)
 
         return result
+
+    def _check_color_zones(self, front_render_path: Path, extended_brief: dict) -> dict:
+        """
+        Phase 7 — Programmatic per-part color coverage check.
+        For each expected part in extended_brief, measures what fraction of
+        non-background render pixels fall within ±40 hue-degrees of the expected
+        dominant color. Returns a dict of {part_name: coverage_fraction}.
+        No LLM required — fast PIL/numpy computation.
+        """
+        try:
+            import colorsys
+            import numpy as np
+            from PIL import Image
+
+            img = Image.open(front_render_path).convert("RGB")
+            arr = np.array(img, dtype=np.float32)
+            bg = np.array(list(BACKGROUND_COLOR_RGB), dtype=np.float32)
+            bg_mask = np.all(np.abs(arr - bg) < 28, axis=2)
+            obj_pixels = arr[~bg_mask] / 255.0
+            if len(obj_pixels) < 100:
+                return {}
+
+            # Precompute hue for every object pixel
+            hues = np.empty(len(obj_pixels))
+            for i, px in enumerate(obj_pixels):
+                h, s, v = colorsys.rgb_to_hsv(float(px[0]), float(px[1]), float(px[2]))
+                hues[i] = h * 360.0  # [0, 360]
+
+            spec = extended_brief.get("geometry_spec_generated", {})
+            result: dict = {}
+            for part_name, part_spec in spec.items():
+                rgb_01 = part_spec.get("dominant_rgb_01")
+                if not rgb_01 or len(rgb_01) < 3:
+                    continue
+                target_h, target_s, target_v = colorsys.rgb_to_hsv(
+                    rgb_01[0], rgb_01[1], rgb_01[2]
+                )
+                target_hue_deg = target_h * 360.0
+
+                # Skip near-grey colors (low saturation) — unreliable hue comparison
+                if target_s < 0.15:
+                    continue
+
+                # Angular distance in hue space (wraps at 360)
+                hue_dist = np.abs(hues - target_hue_deg)
+                hue_dist = np.minimum(hue_dist, 360.0 - hue_dist)
+                coverage = float((hue_dist <= 40.0).sum()) / max(len(hues), 1)
+                result[part_name] = round(coverage, 4)
+
+            return result
+        except Exception as e:
+            logging.debug(f"_check_color_zones failed: {e}")
+            return {}
 
     def _save_metrics(self, result: dict, version_tag: str, ts: str) -> None:
         path = METRICS_DIR / f"{version_tag}_{ts}.json"
