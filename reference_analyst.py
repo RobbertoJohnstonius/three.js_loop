@@ -9,6 +9,8 @@ Passes:
   B. VLM global part decomposition — one Groq call (~4s)
   C. VLM per-part zoom analysis — parallel Groq calls, ≤6 workers (~8s for 12 parts)
   D. Aggregation → extended_brief.json
+  E. Feature inventory — text labels, decorative elements, engraving zones (~4s)
+  F. Texture crops — PIL crop each part to 256×256 PNG, saved to dist/textures/
 """
 
 import base64
@@ -76,6 +78,53 @@ def _groq_vision(prompt: str, b64: str, timeout: int = 35, max_tokens: int = 200
     except Exception as e:
         log.warning(f"[ref-analyst] Groq call failed: {e}")
         return None
+
+
+def _groq_vision_with_retry(
+    prompt: str, b64: str, timeout: int = 35, max_tokens: int = 2000, max_retries: int = 3
+) -> str | None:
+    """Groq vision call with exponential backoff on 429 rate-limit responses."""
+    import time
+    import requests
+
+    key = os.environ.get("GROQ_API_KEY", "")
+    if not key:
+        return None
+
+    for attempt in range(max_retries + 1):
+        try:
+            r = requests.post(
+                f"{GROQ_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": GROQ_MODEL,
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                        {"type": "text", "text": prompt},
+                    ]}],
+                },
+                timeout=timeout,
+            )
+            if r.status_code == 429:
+                wait = 2 ** attempt
+                log.warning(f"[ref-analyst] Groq 429 rate-limit, retrying in {wait}s (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+        except requests.exceptions.HTTPError as e:
+            if attempt < max_retries:
+                wait = 2 ** attempt
+                log.warning(f"[ref-analyst] Groq HTTP error {e}, retrying in {wait}s")
+                time.sleep(wait)
+            else:
+                log.warning(f"[ref-analyst] Groq call failed after {max_retries} retries: {e}")
+                return None
+        except Exception as e:
+            log.warning(f"[ref-analyst] Groq call failed: {e}")
+            return None
+    return None
 
 
 def _parse_json_from(text: str) -> list | dict | None:
@@ -215,7 +264,7 @@ def decompose_parts(ref_path: Path) -> list[dict]:
         from PIL import Image
         img = Image.open(ref_path).convert("RGB")
         b64 = _encode_pil(img, max_size=1024)
-        text = _groq_vision(_DECOMPOSE_PROMPT, b64, timeout=45, max_tokens=2500)
+        text = _groq_vision_with_retry(_DECOMPOSE_PROMPT, b64, timeout=45, max_tokens=2500)
         result = _parse_json_from(text or "")
         if isinstance(result, list):
             parts = []
@@ -286,7 +335,7 @@ def analyze_part(ref_path: Path, part: dict, obj_bbox: list) -> dict:
             return {}
         crop = Image.fromarray(arr[y0:y1, x0:x1])
         b64 = _encode_pil(crop, max_size=512)
-        text = _groq_vision(_part_detail_prompt(part["name"]), b64, timeout=25, max_tokens=600)
+        text = _groq_vision_with_retry(_part_detail_prompt(part["name"]), b64, timeout=25, max_tokens=600)
         result = _parse_json_from(text or "")
         if isinstance(result, dict):
             return result
@@ -340,6 +389,170 @@ def _checklist_question(part: dict) -> str:
     else:
         q += "?"
     return q
+
+
+# ── Stage E-1: PIL accurate per-part color extraction ────────────────────────
+
+def _pil_extract_part_colors(ref_path: Path, parts: list[dict]) -> None:
+    """
+    For each part, PIL-crop the bbox and compute accurate dominant_rgb
+    (median of non-grey pixels) and gradient_direction (horizontal/vertical
+    luminance gradient). Updates parts in-place.
+    """
+    try:
+        import numpy as np
+        import colorsys
+        from PIL import Image
+
+        img = Image.open(ref_path).convert("RGB")
+        arr = np.array(img, dtype=np.float32) / 255.0
+
+        for p in parts:
+            bbox = p.get("bbox_px", [])
+            if len(bbox) < 4:
+                continue
+            x, y, bw, bh = [int(v) for v in bbox]
+            pad = 4
+            x0 = max(0, x - pad)
+            y0 = max(0, y - pad)
+            x1 = min(arr.shape[1], x + bw + pad)
+            y1 = min(arr.shape[0], y + bh + pad)
+            crop = arr[y0:y1, x0:x1]   # shape (H, W, 3)
+            if crop.size < 9:
+                continue
+
+            flat = crop.reshape(-1, 3)
+            # Filter out near-grey pixels (low saturation)
+            vivid = []
+            for px in flat[::3]:
+                h, s, v = colorsys.rgb_to_hsv(float(px[0]), float(px[1]), float(px[2]))
+                if s > 0.12 and v > 0.08:
+                    vivid.append(px)
+            sample = np.array(vivid if len(vivid) >= 10 else flat)
+            median_rgb = np.median(sample, axis=0)
+            p["dominant_rgb"] = [int(median_rgb[0] * 255), int(median_rgb[1] * 255), int(median_rgb[2] * 255)]
+
+            # Gradient direction: compare top-half vs bottom-half luminance (vertical)
+            # and left-half vs right-half luminance (horizontal)
+            lum = 0.299 * crop[:, :, 0] + 0.587 * crop[:, :, 1] + 0.114 * crop[:, :, 2]
+            h_crop, w_crop = lum.shape
+            if h_crop >= 4 and w_crop >= 4:
+                top_lum = float(lum[:h_crop // 2].mean())
+                bot_lum = float(lum[h_crop // 2:].mean())
+                left_lum = float(lum[:, :w_crop // 2].mean())
+                right_lum = float(lum[:, w_crop // 2:].mean())
+                vert_diff = abs(top_lum - bot_lum)
+                horiz_diff = abs(left_lum - right_lum)
+                if max(vert_diff, horiz_diff) > 0.06:
+                    p["gradient_direction"] = "vertical" if vert_diff >= horiz_diff else "horizontal"
+                else:
+                    p["gradient_direction"] = "none"
+            else:
+                p["gradient_direction"] = "none"
+
+    except Exception as e:
+        log.warning(f"[ref-analyst] _pil_extract_part_colors failed: {e}")
+
+
+# ── Stage E-2: Feature inventory (Pass 5 VLM) ────────────────────────────────
+
+_FEATURE_INVENTORY_PROMPT = """\
+Examine this stylised game asset image carefully.
+
+Identify ALL of the following feature types that are visible:
+1. Text or symbols (engravings, inscriptions, runes, logos)
+2. Decorative elements (gems, orbs, buttons, rivets, inlaid patterns, scrollwork)
+3. Connecting elements (ropes, cords, chains, straps, lanyards)
+4. Engraving or relief zones (recessed patterns, carved areas)
+5. Emissive or glowing areas
+
+Output a JSON object:
+{
+  "text_labels": ["list of any text or symbols visible"],
+  "decorative_elements": ["gem type and color", "rivet locations", ...],
+  "connecting_elements": ["brown leather cord at handle", ...],
+  "engraving_zones": ["scrollwork on left side of barrel", ...],
+  "emissive_areas": ["glowing blue crystal on grip", ...],
+  "other_features": ["any other notable feature not covered above"]
+}
+
+Output ONLY the JSON object. If a category has nothing, use an empty list []."""
+
+
+def run_feature_inventory(ref_path: Path) -> dict:
+    """VLM pass E: identify text, decorative elements, connecting elements, engravings."""
+    try:
+        from PIL import Image
+        img = Image.open(ref_path).convert("RGB")
+        b64 = _encode_pil(img, max_size=1024)
+        text = _groq_vision_with_retry(_FEATURE_INVENTORY_PROMPT, b64, timeout=35, max_tokens=1000)
+        result = _parse_json_from(text or "")
+        if isinstance(result, dict):
+            log.info(f"[ref-analyst] Stage E (feature inventory): "
+                     f"{len(result.get('decorative_elements', []))} decorative, "
+                     f"{len(result.get('connecting_elements', []))} connecting elements")
+            return result
+        log.warning(f"[ref-analyst] Stage E parse failed — raw: {str(text)[:200]}")
+        return {}
+    except Exception as e:
+        log.warning(f"[ref-analyst] run_feature_inventory failed: {e}")
+        return {}
+
+
+# ── Stage F: Texture crop extraction ─────────────────────────────────────────
+
+def extract_texture_crops(
+    asset_name: str, ref_path: Path, extended_brief: dict
+) -> dict[str, str]:
+    """
+    For each part in geometry_spec_generated that has has_texture=True,
+    PIL-crop that bbox from the reference image, resize to 256×256,
+    and save to dist/textures/<asset_name>/<part_name>.png.
+
+    Returns dict mapping part_name → absolute file path (only saved parts).
+    Also saves crops for every part (not just textured ones), so the coder
+    can reference any part's appearance.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+
+        out_dir = LOOP_DIR / "dist" / "textures" / asset_name
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        img = Image.open(ref_path).convert("RGB")
+
+        saved: dict[str, str] = {}
+        parts = extended_brief.get("parts", [])
+        spec = extended_brief.get("geometry_spec_generated", {})
+
+        for p in parts:
+            name = p["name"]
+            bbox = p.get("bbox_px", [])
+            if len(bbox) < 4:
+                continue
+            x, y, bw, bh = [int(v) for v in bbox]
+            pad = 8
+            x0 = max(0, x - pad)
+            y0 = max(0, y - pad)
+            x1 = min(img.width, x + bw + pad)
+            y1 = min(img.height, y + bh + pad)
+            if x1 - x0 < 8 or y1 - y0 < 8:
+                continue
+
+            crop = img.crop((x0, y0, x1, y1))
+            crop_resized = crop.resize((256, 256), Image.LANCZOS)
+
+            out_path = out_dir / f"{name}.png"
+            crop_resized.save(str(out_path))
+            saved[name] = str(out_path)
+
+        log.info(f"[ref-analyst] Stage F: {len(saved)} texture crops saved to {out_dir}")
+        return saved
+
+    except Exception as e:
+        log.warning(f"[ref-analyst] extract_texture_crops failed: {e}")
+        return {}
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -411,6 +624,14 @@ def build_extended_brief(asset_name: str, ref_path: Path, brief: dict) -> dict:
     for p in parts:
         p.setdefault("detail", {})
 
+    # ── Stage E-1: PIL accurate color extraction (updates parts in-place) ─────
+    _pil_extract_part_colors(ref_path, parts)
+    log.info("[ref-analyst] Stage E-1: PIL color extraction done")
+
+    # ── Stage E-2: Feature inventory (Pass 5 VLM) ─────────────────────────────
+    feature_inventory = run_feature_inventory(ref_path)
+    log.info("[ref-analyst] Stage E-2: feature inventory done")
+
     # ── Stage D: aggregation ───────────────────────────────────────────────
     geometry_spec_generated: dict = {}
     feature_checklist_generated: dict = {}
@@ -450,6 +671,16 @@ def build_extended_brief(asset_name: str, ref_path: Path, brief: dict) -> dict:
 
         feature_checklist_generated[name] = _checklist_question(p)
 
+    # ── Stage F: texture crops ─────────────────────────────────────────────
+    texture_crops: dict = {}
+    try:
+        texture_crops = extract_texture_crops(asset_name, ref_path, {
+            "parts": parts,
+            "geometry_spec_generated": geometry_spec_generated,
+        })
+    except Exception as _te:
+        log.warning(f"[ref-analyst] Stage F failed (non-fatal): {_te}")
+
     result = {
         "_ref_sha":     ref_sha,
         "_asset":       asset_name,
@@ -457,14 +688,17 @@ def build_extended_brief(asset_name: str, ref_path: Path, brief: dict) -> dict:
         "silhouette":   sil,
         "parts":        parts,
         "part_count":   len(parts),
-        "geometry_spec_generated":   geometry_spec_generated,
+        "geometry_spec_generated":    geometry_spec_generated,
         "feature_checklist_generated": feature_checklist_generated,
+        "feature_inventory":          feature_inventory,
+        "texture_crops":              texture_crops,
     }
 
     EXTENDED_BRIEF_PATH.write_text(json.dumps(result, indent=2))
     log.info(
         f"[ref-analyst] extended_brief.json written "
-        f"({len(parts)} parts, {len(parts_to_zoom)} zoomed)"
+        f"({len(parts)} parts, {len(parts_to_zoom)} zoomed, "
+        f"{len(texture_crops)} texture crops)"
     )
     return result
 

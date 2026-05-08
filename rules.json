@@ -22,5 +22,7 @@
     "source": "geometry_invariant",
     "severity": "hard"
   },
-  "Attempting 'shape' improvements for croc_pistol has regressed or failed 3 consecutive times \u2014 avoid this approach and try a fundamentally different type"
+  "Attempting 'shape' improvements for croc_pistol has regressed or failed 3 consecutive times \u2014 avoid this approach and try a fundamentally different type",
+  "CanvasTexture for procedural detail: When brief indicates has_texture=True or engraving/scrollwork detail, use CanvasTexture instead of vertex colors for that mesh ONLY. Pattern: const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512; const ctx = canvas.getContext('2d'); /* draw pattern */; const tex = new THREE.CanvasTexture(canvas); mat.map = tex; mat.vertexColors = false; mat.color = new THREE.Color(0xffffff); DO NOT combine vertexColors:true with map on the same material \u2014 Three.js ignores map when vertexColors is set. Use vertexColors for base parts, map/CanvasTexture for detail parts only.",
+  "TextureLoader for reference crops: Reference texture crops are saved to dist/textures/<asset_name>/<part_name>.png and served over HTTP by the built-in Node server at /dist/textures/<asset_name>/<part_name>.png. Use: const tex = new THREE.TextureLoader().load('/dist/textures/<asset_name>/<part_name>.png'); mat.map = tex; mat.vertexColors = false; This works in both headless (Puppeteer) and viewer because render_scene.mjs starts its own HTTP server serving the loop directory. Only use TextureLoader for parts where the crop exists AND the part has complex reference detail (engraving, scales, text) that cannot be reproduced with vertex colors alone."
 ]

@@ -583,18 +583,29 @@ class ThreeJSAdapter:
             if vc and result.get("screenshot_analysis") is not None:
                 result["screenshot_analysis"].setdefault("pixel_metrics", {}).update(vc)
 
-        # Stage 3e: color-zone comparison vs extended_brief (Phase 7)
+        # Stage 3e: extended_brief metrics (color zones + part presence + proportions)
         front_path_e = (result.get("angle_paths") or {}).get("f")
         if front_path_e and Path(front_path_e).exists():
             try:
                 from reference_analyst import load_extended_brief
                 eb = load_extended_brief()
                 if eb.get("geometry_spec_generated"):
+                    # 3e-i: color zones
                     cz = self._check_color_zones(Path(front_path_e), eb)
                     if cz and result.get("screenshot_analysis") is not None:
                         result["screenshot_analysis"].setdefault("pixel_metrics", {}).update({"color_zones": cz})
+                    # 3e-ii: part presence check (Layer 1)
+                    geo_for_parts = result.get("geometry") or {}
+                    pp = self._check_part_presence(geo_for_parts, eb)
+                    if pp and result.get("screenshot_analysis") is not None:
+                        result["screenshot_analysis"].setdefault("pixel_metrics", {}).update(pp)
+                    # 3e-iii: proportions vs reference (Layer 1)
+                    pr = self._compare_proportions_to_ref(Path(front_path_e), eb)
+                    if pr and result.get("screenshot_analysis") is not None:
+                        result["screenshot_analysis"].setdefault("pixel_metrics", {}).update(pr)
             except Exception as _cze:
-                logging.debug(f"color_zones failed: {_cze}")
+                import logging as _lg
+                _lg.debug(f"Stage 3e extended_brief metrics failed: {_cze}")
 
         self._save_metrics(result, version_tag, ts)
         return result
@@ -688,6 +699,67 @@ class ThreeJSAdapter:
             return result
         except Exception as e:
             logging.debug(f"_check_color_zones failed: {e}")
+            return {}
+
+    def _check_part_presence(self, geo: dict, extended_brief: dict) -> dict:
+        """
+        Layer 1: compare geo mesh_names against parts expected by extended_brief.
+        Returns {part_name: True/False} presence map and list of missing part names.
+        """
+        try:
+            spec = extended_brief.get("geometry_spec_generated", {})
+            if not spec:
+                return {}
+            mesh_names = set(geo.get("mesh_names", []))
+            presence: dict[str, bool] = {}
+            missing: list[str] = []
+            for part_name in spec:
+                found = part_name in mesh_names
+                presence[part_name] = found
+                if not found:
+                    missing.append(part_name)
+            return {"part_presence": presence, "missing_parts": missing}
+        except Exception as e:
+            import logging
+            logging.debug(f"_check_part_presence failed: {e}")
+            return {}
+
+    def _compare_proportions_to_ref(self, front_render_path: Path, extended_brief: dict) -> dict:
+        """
+        Layer 1: measure rendered object H:W ratio from the front render and
+        compare to the reference image aspect ratio from extended_brief.
+        Returns {render_hw_ratio, ref_hw_ratio, hw_ratio_delta}.
+        """
+        try:
+            import numpy as np
+            from PIL import Image
+
+            sil = extended_brief.get("silhouette", {})
+            ref_bbox = sil.get("object_bbox_px", [])
+            if len(ref_bbox) < 4 or ref_bbox[2] < 1:
+                return {}
+            ref_hw = round(ref_bbox[3] / max(ref_bbox[2], 1), 3)
+
+            img = Image.open(front_render_path).convert("RGB")
+            arr = np.array(img, dtype=np.float32)
+            bg = np.array(list(BACKGROUND_COLOR_RGB), dtype=np.float32)
+            obj_mask = ~np.all(np.abs(arr - bg) < 28, axis=2)
+            rows = np.where(obj_mask.any(axis=1))[0]
+            cols = np.where(obj_mask.any(axis=0))[0]
+            if not len(rows) or not len(cols):
+                return {}
+            render_h = int(rows[-1] - rows[0] + 1)
+            render_w = int(cols[-1] - cols[0] + 1)
+            render_hw = round(render_h / max(render_w, 1), 3)
+
+            return {
+                "render_hw_ratio": render_hw,
+                "ref_hw_ratio": ref_hw,
+                "hw_ratio_delta": round(abs(render_hw - ref_hw), 3),
+            }
+        except Exception as e:
+            import logging
+            logging.debug(f"_compare_proportions_to_ref failed: {e}")
             return {}
 
     def _save_metrics(self, result: dict, version_tag: str, ts: str) -> None:

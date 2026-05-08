@@ -1337,7 +1337,8 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
     try:
         from reference_analyst import load_extended_brief
         _eb = load_extended_brief()
-        _cz = (analysis.get("pixel_metrics") or {}).get("color_zones", {})
+        _pm = analysis.get("pixel_metrics") or {}
+        _cz = _pm.get("color_zones", {})
         _eb_spec = _eb.get("geometry_spec_generated", {})
         for _pname, _pspec in _eb_spec.items():
             _rgb = _pspec.get("dominant_rgb_01", [])
@@ -1353,6 +1354,22 @@ def get_rubric(metrics: dict, asset_name: str) -> dict:
                     f"part '{_pname}' expected color rgb({_rgb[0]:.2f},{_rgb[1]:.2f},{_rgb[2]:.2f}) "
                     f"covers only {_cov:.1%} of render pixels — color may be missing or wrong"
                 )
+        # Missing mesh parts (Layer 1 check)
+        _missing = _pm.get("missing_parts", [])
+        for _mp in _missing[:3]:
+            polish_items.append(
+                f"mesh named '{_mp}' expected by extended_brief but not found in geometry — "
+                f"add this named mesh to the asset"
+            )
+        # Proportion mismatch vs reference
+        _hw_delta = _pm.get("hw_ratio_delta")
+        _render_hw = _pm.get("render_hw_ratio")
+        _ref_hw = _pm.get("ref_hw_ratio")
+        if _hw_delta is not None and _hw_delta > 0.25:
+            polish_items.append(
+                f"H:W ratio mismatch — render={_render_hw:.2f} vs reference={_ref_hw:.2f} "
+                f"(delta={_hw_delta:.2f}). Adjust overall proportions to better match reference."
+            )
     except Exception:
         pass
 
@@ -1814,7 +1831,82 @@ Return ONLY valid JSON:
         if merged_checklist:
             result["feature_check"] = run_feature_checklist(stitched_path, merged_checklist)
 
+        # Layer 2: targeted per-part critique for failing color zones / missing parts
+        ref_path_l2 = find_reference(asset_name)
+        if ref_path_l2:
+            try:
+                tc = run_targeted_part_critique(stitched_path, ref_path_l2, result)
+                if tc:
+                    result["targeted_part_critique"] = tc
+            except Exception as _tce:
+                log.debug(f"targeted_part_critique failed (non-fatal): {_tce}")
+
     return result
+
+
+def run_targeted_part_critique(
+    stitched_path: str, ref_path: str, visual: dict, max_parts: int = 3
+) -> list[dict]:
+    """
+    Layer 2: for each failing part (poor color zone coverage or missing from mesh_names),
+    run a dual-image VLM focused specifically on that part.
+
+    Returns list of {part, finding, action} dicts for injection into the planner prompt.
+    """
+    from reference_analyst import load_extended_brief
+
+    eb = load_extended_brief()
+    spec = eb.get("geometry_spec_generated", {})
+    if not spec:
+        return []
+
+    pm = visual.get("pixel_metrics") or {}
+    color_zones = pm.get("color_zones", {})
+    missing_parts = pm.get("missing_parts", [])
+
+    # Collect failing parts: missing mesh OR color coverage < 5%
+    failing: list[str] = list(missing_parts)
+    for pname, cov in color_zones.items():
+        if pname not in failing and cov < 0.05:
+            failing.append(pname)
+
+    if not failing:
+        return []
+
+    critiques = []
+    for part_name in failing[:max_parts]:
+        pspec = spec.get(part_name, {})
+        rgb = pspec.get("dominant_rgb_01", [0.5, 0.5, 0.5])
+        rgb_255 = [int(v * 255) for v in rgb]
+        texture_desc = pspec.get("texture_desc") or "none"
+        primitive = pspec.get("primitive", "unknown")
+
+        prompt = (
+            f"IMAGE A is our current 3D render. "
+            f"IMAGE B is the REFERENCE photo.\n\n"
+            f"The '{part_name}' part should be: {primitive}, "
+            f"color ~RGB({rgb_255[0]},{rgb_255[1]},{rgb_255[2]}), "
+            f"texture: {texture_desc}.\n\n"
+            f"Answer in 2-3 sentences:\n"
+            f"1. What does the reference show for '{part_name}'?\n"
+            f"2. What is wrong or missing in the render?\n"
+            f"3. One concrete THREE.js geometry/color fix to apply."
+        )
+
+        try:
+            text = call_llm_vision(prompt, stitched_path, json_mode=False, image_path_b=ref_path)
+            if text and len(text) > 20:
+                critiques.append({
+                    "part": part_name,
+                    "finding": text.strip()[:400],
+                    "action": text.strip().split(".")[-2].strip() if "." in text else text[:120],
+                })
+        except Exception as e:
+            log.debug(f"targeted critique for '{part_name}' failed: {e}")
+
+    log.info(f"[targeted-critique] {len(critiques)} part critiques generated")
+    return critiques
+
 
 # ── Agent: Critic ─────────────────────────────────────────────────────────────
 
@@ -2123,6 +2215,7 @@ def run_planner(
     metrics: dict | None = None,
     score: float = 0.0,
     rubric: dict | None = None,
+    visual: dict | None = None,
 ) -> dict:
     """LLM proposes one specific, implementable improvement. Returns plan dict."""
     steering = load_steering()
@@ -2176,8 +2269,23 @@ def run_planner(
     graveyard_block  = read_graveyard_summary()
     planner_ref_spec = _format_reference_spec_block(load_brief().get("reference_spec", {}))
 
+    # Targeted per-part critique block (Layer 2) — highest-priority signal
+    targeted_critique_block = ""
+    if visual:
+        tc = visual.get("targeted_part_critique", [])
+        if tc:
+            lines = ["TARGETED PART CRITIQUE (per-part VLM analysis — address these specifically):"]
+            for entry in tc[:3]:
+                part = entry.get("part", "?")
+                finding = entry.get("finding", "")[:200]
+                action = entry.get("action", "")[:120]
+                lines.append(f"  [{part}] {finding}")
+                if action:
+                    lines.append(f"    → Suggested fix: {action}")
+            targeted_critique_block = "\n".join(lines) + "\n\n"
+
     prompt = f"""{focus_block}{cam_block}
-{planner_ref_spec}Propose ONE specific improvement for this Three.js {asset_name} asset.
+{planner_ref_spec}{targeted_critique_block}Propose ONE specific improvement for this Three.js {asset_name} asset.
 
 SCORING STATUS:
 {status_line}
@@ -2275,11 +2383,34 @@ def run_coder(
 
     # Phase 7: inject extended geometry table from reference analyst
     extended_geo_block = ""
+    texture_table_block = ""
     try:
         from reference_analyst import load_extended_brief, format_geometry_table
         _eb = load_extended_brief()
         if _eb.get("geometry_spec_generated"):
             extended_geo_block = "\n" + format_geometry_table(_eb) + "\n"
+        # Texture crops table: list parts that have reference crop images available
+        _crops = _eb.get("texture_crops", {})
+        _inv = _eb.get("feature_inventory", {})
+        if _crops:
+            _tex_lines = [
+                "## REFERENCE TEXTURE CROPS AVAILABLE",
+                f"Part crops saved to dist/textures/{asset_name}/<part>.png",
+                "Use TextureLoader to load them: const t = new THREE.TextureLoader()",
+                f"  .load('/dist/textures/{asset_name}/<part>.png');",
+                "Apply via mesh.material.map = t; mesh.material.vertexColors = false;",
+                "Parts with texture crops (use for has_texture=True parts):",
+            ]
+            for _pname, _ppath in list(_crops.items())[:12]:
+                _spec = _eb.get("geometry_spec_generated", {}).get(_pname, {})
+                _td = _spec.get("texture_desc") or "no detail"
+                _has = "TEXTURED" if _spec.get("has_texture") else "reference only"
+                _tex_lines.append(f"  {_pname}: {_has} [{_td}] → /dist/textures/{asset_name}/{_pname}.png")
+            if _inv.get("decorative_elements"):
+                _tex_lines.append(f"Decorative features: {'; '.join(_inv['decorative_elements'][:4])}")
+            if _inv.get("engraving_zones"):
+                _tex_lines.append(f"Engraving zones: {'; '.join(_inv['engraving_zones'][:3])}")
+            texture_table_block = "\n" + "\n".join(_tex_lines) + "\n"
     except Exception:
         pass
 
@@ -2309,7 +2440,7 @@ def run_coder(
 IMPROVEMENT [{variant}]: {plan.get('title', 'general improvement')}
 INSTRUCTION: {plan.get('instruction', 'improve quality')}
 {alt_constraint}
-{extended_geo_block}{brief_block}{ref_note}
+{extended_geo_block}{texture_table_block}{brief_block}{ref_note}
 
 PERMANENT RULES (must follow):
 {rules_block}
@@ -2888,7 +3019,8 @@ def run_loop(state: dict, max_iter: int) -> None:
         # ── Planner ─────────────────────────────────────────────────────────
         current_code = asset_path.read_text()
         plan = run_planner(
-            asset_name, critique, current_code, state["history"], metrics, score, rubric=rubric
+            asset_name, critique, current_code, state["history"], metrics, score,
+            rubric=rubric, visual=visual,
         )
         log.info(f"[planner] {plan.get('improvement_type', '?')} → {plan.get('title', '?')!r}")
 

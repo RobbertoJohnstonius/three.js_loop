@@ -249,6 +249,7 @@ Current assets with references:
 - `references/boab_tree.png` — Australian boab (bottle-shaped trunk, spreading canopy)
 - `references/banana_bunch.png` — hand-picked bunch, 6 bananas in 2 rows of 3
 - `references/balloon_bunch.png` — 9 party balloons on rigid white sticks, tight cluster
+- `references/croc_pistol.png` — decorative teal/jade pistol with gold rail, orange guard, croc-scale grip
 
 ## Vision provider
 Groq (llama-4-scout-17b) is primary (~1s). OpenRouter (qwen2.5-vl-72b) is fallback (~24s).
@@ -312,3 +313,49 @@ from brief.json.
 ## Git auto-backup
 `_git_backup()` runs at end of every loop run — commits changed files and pushes.
 Remote: git@github.com:RobbertoJohnstonius/three.js_loop.git
+
+## Reference analyst pipeline (Phase 7 — 2026-05-08)
+`reference_analyst.py` runs a 6-pass analysis of the reference image and writes `extended_brief.json`.
+Called at loop startup (cached by ref-image SHA256 — only re-runs when the image changes).
+
+### Passes
+- **Stage A** — PIL silhouette: object bbox, aspect ratio, dominant palette. No LLM.
+- **Stage B** — VLM global part decomposition: lists every named part with bbox_px, dominant_rgb, geometry_hint.
+- **Stage C** — VLM per-part zoom: crop + targeted analysis per part (geometry_primitive, color gradient, texture description, roughness/metalness estimates). Top 10 parts by bbox area. 4 workers.
+- **Stage E-1** — PIL accurate color: for each part, PIL-median of non-grey crop pixels → accurate `dominant_rgb`, adds `gradient_direction` (horizontal/vertical/none).
+- **Stage E-2** — Feature inventory VLM: single pass identifying text labels, decorative elements, connecting elements, engraving zones, emissive areas.
+- **Stage F** — Texture crops: PIL-crop each part bbox → 256×256 PNG → `dist/textures/<asset>/<part>.png`.
+
+All Groq calls use `_groq_vision_with_retry()`: exponential backoff (2s, 4s, 8s) on 429 rate-limit responses.
+
+### extended_brief.json fields
+- `geometry_spec_generated` — per-part: primitive, world_pos, world_size, dominant_rgb_01, color_gradient, roughness, metalness, has_texture, texture_desc, sub_features
+- `feature_checklist_generated` — auto-generated yes/no VLM questions per part (merged with manual brief.json checklist; manual takes precedence)
+- `feature_inventory` — {text_labels, decorative_elements, connecting_elements, engraving_zones, emissive_areas}
+- `texture_crops` — {part_name: absolute_path} for all saved 256×256 crops
+
+### Integration hooks
+- **Coder prompt**: `format_geometry_table(eb)` injects per-part position/size/color table. Texture crops table lists available `dist/textures/<asset>/<part>.png` paths with `has_texture` flag and feature inventory decorative/engraving notes.
+- **Critic/planner**: feature_checklist_generated merged into feature checklist for VLM verification.
+- **Rubric Category G**: color_zones coverage < 3% → polish_item; missing_parts → polish_item; hw_ratio_delta > 0.25 → polish_item.
+
+## Layer 1 programmatic metrics (Phase 7)
+New methods in `ThreeJSAdapter`, wired into Stage 3e of `run()`:
+
+- **3e-i** `_check_color_zones(front_path, eb)` — for each part with saturated expected color, measures fraction of non-bg render pixels within ±40° hue. Returns `{part_name: coverage_fraction}`.
+- **3e-ii** `_check_part_presence(geo, eb)` — compares `geo.mesh_names` vs `geometry_spec_generated` keys. Returns `{part_presence: {name: bool}, missing_parts: [name]}`.
+- **3e-iii** `_compare_proportions_to_ref(front_path, eb)` — PIL silhouette of render vs reference `object_bbox_px` aspect ratio. Returns `{render_hw_ratio, ref_hw_ratio, hw_ratio_delta}`.
+
+All results merged into `screenshot_analysis["pixel_metrics"]`.
+
+## Layer 2 targeted part critique (Phase 7)
+`run_targeted_part_critique(stitched_path, ref_path, visual, max_parts=3)` fires from `run_visual_analysis()` after feature checklist.
+
+Identifies failing parts: missing from `mesh_names` OR color_zone coverage < 5%. For each (up to 3), runs a dual-image VLM call (render=IMAGE A, reference=IMAGE B) focused on that specific part. Returns `[{part, finding, action}]`.
+
+Results stored as `visual["targeted_part_critique"]` and injected into the planner prompt as a `TARGETED PART CRITIQUE` block — highest-priority signal, listed before critic findings.
+
+## Texture pipeline rules (Phase 7)
+Two new entries in `rules.json`:
+- **CanvasTexture**: for `has_texture=True` parts (scrollwork, engraving, scales). `canvas.getContext('2d')` draw pattern → `new THREE.CanvasTexture(canvas)`. Set `mat.vertexColors = false` — cannot combine with vertexColors.
+- **TextureLoader**: for parts with crops in `dist/textures/<asset>/<part>.png`. Served at `/dist/textures/...` by render_scene.mjs built-in HTTP server (works in both headless and viewer). Set `mat.vertexColors = false`.
