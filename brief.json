@@ -3,19 +3,33 @@
   "render_style": "low-poly",
   "texture_style": "vertex-color",
   "target_game": "fantasy RPG with a Three.js/Vite renderer",
-  "poly_target": "up to 3000 triangles \u2014 smooth balloons need more geometry than a typical low-poly asset",
-  "material_style": "MeshStandardMaterial with roughness 0.05\u20130.35 (shiny latex), metalness 0.0 \u2014 balloons are glossy rubber, NOT matte",
-  "size_reference": "asset should fit inside a 2\u00d72\u00d72 unit bounding box",
+  "poly_target": "600-2500 triangles MINIMUM \u2014 pistol MUST have body, rail, barrel, grip, guard, hammer as distinct named meshes. Below 300 triangles is UNACCEPTABLE regardless of score.",
+  "poly_min_hard": 900,
+  "material_style": "teal/jade metallic body (roughness 0.18-0.28, metalness 0.55-0.70), gold ornamental rail+spines (roughness 0.08-0.16, metalness 0.88-1.0), green scale grip (roughness 0.30-0.45, metalness 0.05-0.15), orange guard (roughness 0.12-0.20, metalness 0.65-0.80)",
+  "size_reference": "asset should fit inside a 2x2x2 unit bounding box; barrel points along +X axis, grip hangs below (-Y). Measured aspect ratio W:H = 1.54:1.",
   "emissive": false,
+  "collision_body_type": "static",
+  "geometry_spec": {
+    "description": "Precise 3D coordinates measured from reference image (1080x702px gun region, mapped to 2.0x1.30 unit space)",
+    "body":   { "size": [1.56, 0.42, 0.44], "position": [0.0, 0.28, 0.0], "subdivisions": "4x3x3 minimum for face-colour variation" },
+    "rail":   { "size": [1.58, 0.10, 0.46], "position": [0.0, 0.54, 0.0], "note": "thin gold strip on TOP of body \u2014 separate mesh name='rail'" },
+    "barrel": { "radius": 0.14, "length": 0.22, "position": [0.89, 0.34, 0.0], "note": "SHORT FAT STUB \u2014 NOT a long rod. 0.22 units long only. CylinderGeometry rotated to X axis." },
+    "grip":   { "size": [0.50, 0.64, 0.43], "position": [-0.28, -0.22, 0.0], "tilt": "-15 deg (rotateZ -PI/12)", "subdivisions": "3x8x3 for scale-like face pattern" },
+    "guard":  { "size": [0.46, 0.10, 0.44], "position": [-0.06, -0.20, 0.0], "note": "LARGE visible orange bar \u2014 minimum 0.40 wide. Ideally a TorusGeometry arc but box acceptable." },
+    "hammer": { "size": [0.12, 0.10, 0.44], "position": [-0.69, 0.54, 0.0], "note": "small rear sight block at top-rear of body" }
+  },
   "technique_notes": [
-    "LOW-POLY STYLE: prefer IcosahedronGeometry(r, 1\u20132) per balloon \u2014 keep faces faceted, avoid over-subdivision",
-    "Each balloon is a SEPARATE mesh with ONE solid vertex color per balloon (not noise-based variation)",
-    "Balloon shape: slightly elongated sphere \u2014 scale Y by 1.15\u20131.25 to make teardrop shape, small pinch at bottom",
-    "UV coordinates are required \u2014 use spherical projection for each balloon sphere",
-    "Vertex color per balloon: pick from a diverse palette (red, green, blue, orange, yellow, magenta, teal, purple, white, dark-green). Apply the same color to every vertex on that balloon.",
-    "Strings: thin CylinderGeometry or custom lines from bottom of each balloon converging to a single point below",
-    "Set roughness 0.08\u20130.25 and metalness 0.0 explicitly on every balloon \u2014 shiny latex, never matte",
-    "Balloons clustered into a tight 3D bunch \u2014 overlapping, at varying heights and depths"
+    "ORIENTATION: barrel points along +X axis. Grip hangs below along -Y. Gun centred near (0, 0.2, 0). Do NOT use group.rotation.",
+    "BODY mesh (name='body'): 1.56x0.42x0.44 BoxGeometry at position (0, 0.28, 0). Subdivide 4x3x3. Vivid teal/jade vertex colors (#4a9070 to #60b090). roughness=0.22, metalness=0.60.",
+    "RAIL mesh (name='rail'): SEPARATE thin strip 1.58x0.10x0.46 sitting ON TOP of body at (0, 0.54, 0). Gold vertex color (#c8a030 to #e0b840). roughness=0.10, metalness=0.90. This is the ornamental gold top rail.",
+    "BARREL mesh (name='barrel'): CylinderGeometry(0.14, 0.14, 0.22, 10) \u2014 SHORT FAT stub, 0.22 units long. rotateZ(PI/2) to align along X. Position (0.89, 0.34, 0). Darker grey-teal (#48606a). roughness=0.25, metalness=0.60. CRITICAL: barrel is SHORT (0.22 long), NOT a long rod.",
+    "GRIP mesh (name='grip'): BoxGeometry(0.50, 0.64, 0.43, 3, 8, 3) at (-0.28, -0.22, 0), tilted rotateZ(-PI/12). GREEN DOMINANT scale colours: 70% of faces must be teal-green (#4a7050 to #60a070), with only 15-20% purple/blue accent. CRITICAL: grip mean colour must be GREEN (hue 100-200 degrees), NOT purple.",
+    "GUARD mesh (name='guard'): LARGE orange arc/box at (-0.06, -0.20, 0), minimum 0.40 units wide, clearly visible orange (#cc6820 to #e07830). roughness=0.15, metalness=0.70. This is one of the most visible features \u2014 make it big and orange.",
+    "HAMMER mesh (name='hammer'): small 0.12x0.10x0.44 block at (-0.69, 0.54, 0) \u2014 rear sight at top-rear of body. Dark teal (#3a6050).",
+    "SPINES: 4-6 small ConeGeometry pyramids (radius 0.05, height 0.08, 4 sides) spaced along the rail top at y=0.64. Gold colour matching rail.",
+    "Vertex colors per face: compute from face centroid hash for subtle variation within each part. Use toNonIndexed() + computeVertexNormals() for flat faceted look. Hash MUST return [0,1]: normalise with (h/3+1)*0.5.",
+    "Apply posNoise(x,y,z) displacement to each indexed geometry BEFORE toNonIndexed(). This ensures UV-seam vertex pairs at the same position receive identical displacements, fixing shared_edge_fraction. Scale 0.02-0.04.",
+    "All materials: MeshStandardMaterial with vertexColors=true, color=0xffffff. Set roughness and metalness explicitly per part."
   ],
   "camera_config": {
     "camera_position": [
@@ -29,87 +43,108 @@
       0
     ],
     "camera_basis": {
-      "world_x": "image right \u2014 objects at positive X appear to the right of the render",
-      "world_y": "image up \u2014 objects at positive Y appear higher in the render",
-      "world_z": "image depth \u2014 positive Z goes INTO the screen (further from camera)"
+      "world_x": "image right \u2014 barrel tip points right (+X)",
+      "world_y": "image up \u2014 grip hangs below (-Y), spikes point up (+Y)",
+      "world_z": "image depth \u2014 positive Z goes INTO the screen (away from camera)"
     },
     "derived_rules": [
-      "Bunch hangs in the air: balloon centres between y=0.1 and y=1.6, strings dangle below (y<0)",
-      "Cluster is roughly centred at x=0, z=0 \u2014 balloons spread in all directions (X, Y, Z)",
-      "No group.rotation \u2014 geometry is already in correct orientation for this camera"
+      "Barrel along +X axis \u2014 gun shows as side profile from quarter-angle camera",
+      "Grip below body \u2014 gun sits upright, grip at bottom",
+      "No group.rotation \u2014 geometry already in correct orientation"
     ]
   },
   "expected_arrangement": {
-    "primary_mesh_name": "balloon",
-    "body_count": 9,
+    "primary_mesh_name": "body",
+    "body_count": 1,
     "row_count": 1,
-    "bodies_per_row": 9,
-    "row_axis": "y",
-    "row_spread_axis": "xz",
-    "description": "9 balloons loosely clustered in a tight 3D bunch \u2014 rigid sticks hold them at similar heights"
+    "bodies_per_row": 1,
+    "row_axis": "x",
+    "row_spread_axis": "x",
+    "description": "single pistol weapon \u2014 one body mesh centred near origin"
   },
   "expected_mesh_types": {
-    "balloon": "balloon",
-    "string": "string"
+    "body": "body",
+    "barrel": "barrel",
+    "grip": "grip"
   },
   "expected_material_properties": {
-    "roughness_min": 0.04,
-    "roughness_max": 0.4
+    "roughness_min": 0.08,
+    "roughness_max": 0.48,
+    "metalness_min": 0.05,
+    "metalness_max": 1.0
   },
   "expected_proportions": {
     "height_to_width_ratio": [
-      0.8,
-      2.2
+      0.35,
+      0.85
     ]
   },
   "pixel_targets": {
-    "arc_depth_ratio_min": 0.05,
-    "coverage_asymmetry_max": 0.35
+    "arc_depth_ratio_min": 0.02,
+    "coverage_asymmetry_max": 0.45,
+    "highlight_fraction_min": 0.003
   },
   "expected_color_hsv": {
-    "hue_center": 220.0,
-    "hue_tolerance": 60.0,
-    "saturation_min": 0.38,
+    "hue_center": 136.8,
+    "hue_tolerance": 49.4,
+    "saturation_min": 0.18,
     "_auto_calibrated": true
   },
-  "expected_cluster_density_max": 0.45,
+  "expected_cluster_density_max": 0.8,
   "expected_silhouette_hw_ratio": {
-    "min": 0.6,
-    "max": 1.6
+    "min": 0.3,
+    "max": 0.9
   },
+  "expected_palette_hues_min": 3,
+  "expected_ref_pixel_sim_min": 0.20,
+  "min_reference_similarity_to_pass": 7,
+  "expected_mesh_colors": {
+    "body":   { "hue_min": 110, "hue_max": 185, "label": "teal/jade green" },
+    "barrel": { "hue_min": 140, "hue_max": 210, "label": "grey-teal" },
+    "grip":   { "hue_min": 100, "hue_max": 200, "dominant_not": [240, 325], "label": "green/teal dominant (NOT purple)" },
+    "guard":  { "hue_min": 10,  "hue_max": 55,  "label": "orange/amber" },
+    "rail":   { "hue_min": 35,  "hue_max": 80,  "label": "gold/yellow" }
+  },
+  "feature_checklist": {
+    "orange_guard": "Is there a visible orange, amber, copper, or brownish-orange trigger guard element located between the main body and the grip of the pistol? It may appear dark due to lighting but should have warm orange/amber hue.",
+    "gold_rail_top": "Is there a gold, yellow, or dark-gold ornamental rail or strip along the top of the pistol? It may have small spike-like or pyramidal decorative features on top — these may appear dark due to lighting.",
+    "teal_body": "Is the main body/slide of the pistol clearly TEAL, JADE GREEN, or blue-green in colour (not olive-brown or grey)?",
+    "distinct_parts": "Are there at least 4 visually distinct parts visible — a horizontal body, a grip hanging below, a barrel at the front, and a guard or trigger element?",
+    "short_barrel_stub": "Is the barrel a SHORT STUBBY cylinder at the front (not a long rod extending far beyond the body — it should protrude less than 20% of the total gun length)?"
+  },
+  "feature_checklist_required": ["orange_guard", "gold_rail_top", "distinct_parts"],
   "reference_spec": {
-    "_checksum": "1190a057f86c03a9",
-    "_asset": "balloon_bunch",
+    "_checksum": "c1003959ddb5544f",
+    "_asset": "croc_pistol",
     "count_and_identity": {
-      "object_type": "balloons",
-      "object_count": 9,
+      "object_type": "gun",
+      "object_count": 1,
       "confidence": "high",
-      "notes": "Nine distinct balloons on rigid white sticks. User confirmed count=9."
+      "notes": "The image depicts a single decorative gun"
     },
     "shape_and_proportions": {
-      "overall_shape": "spherical cluster",
-      "height_to_width_ratio": "roughly 1:1",
-      "silhouette_description": "a group of overlapping circles forming a rounded mass",
-      "dominant_axis": "roughly_equal"
+      "overall_shape": "elongated rectangle with curved handle",
+      "height_to_width_ratio": "roughly 1:3",
+      "silhouette_description": "The silhouette is primarily composed of a long, horizontal body with a shorter, curved handle extending downwards and a protruding cylindrical component near the front",
+      "dominant_axis": "horizontal"
     },
     "attachment_and_connection": {
-      "connector_type": "rigid_stick",
-      "connector_description": "Rigid white sticks, one per balloon, going straight down from the balloon bottom. Sticks do NOT converge to a single point.",
+      "connector_type": "flexible_string",
+      "connector_description": "a brown cord or string",
       "all_at_same_height": false,
-      "attachment_point": "bottom"
+      "attachment_point": "side"
     },
     "spatial_arrangement": {
-      "arrangement_type": "cluster",
-      "density": "tightly_packed",
-      "height_variation": "slight_variation",
-      "depth_variation": "some_depth"
+      "arrangement_type": "single",
+      "density": "moderately_spaced",
+      "height_variation": "all_same",
+      "depth_variation": "flat_layer"
     },
     "surface_and_material": {
-      "surface_finish": "glossy",
-      "texture_type": "smooth",
-      "has_texture_map": false,
-      "color_description": "green, blue, red, purple, yellow, orange"
+      "surface_finish": "glossy|very_glossy",
+      "texture_type": "smooth|bumpy",
+      "has_texture_map": true,
+      "color_description": "green, gold, purple, gray, orange"
     }
-  },
-  "min_reference_similarity_to_pass": 7
+  }
 }

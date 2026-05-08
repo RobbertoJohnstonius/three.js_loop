@@ -16,9 +16,11 @@
   "Palette index out-of-bounds crash: Math.floor(noise * palette.length) returns palette.length when noise==1.0 \u2014 palette[length] is undefined \u2192 reading .r throws. Always clamp: palette[Math.min(Math.floor(noise * palette.length), palette.length - 1)]",
   "Multi-mesh assets must name each significant mesh part using a semantic .name string before adding it to the group. Use standard names so the viewer can apply per-part Realistic materials: 'trunk' or 'bark' for tree trunks/stems/branches, 'foliage' for leaf clusters/canopy, 'body' for the main hull of an object, 'roof', 'ground', 'water', etc. Example: const trunk = new THREE.Mesh(geo, mat); trunk.name = 'trunk'; group.add(trunk);",
   "Attempting 'shape' improvements for balloon_bunch has regressed or failed 3 consecutive times \u2014 avoid this approach and try a fundamentally different type",
+  "balloon_bunch material: roughness MUST be 0.08\u20130.25 (shiny latex rubber, NOT matte). NEVER increase roughness above 0.30 for balloons. The generic stone/rock roughness rule (0.75\u20130.95) does NOT apply to balloon assets. Brief material_style overrides generic material rules.",
   {
     "rule": "NEVER remove deleteAttribute('uv') before mergeVertices() on IcosahedronGeometry. This line is CRITICAL \u2014 removing it causes shared_edge_fraction=0.963 (UV seam crack). It must appear in every version.",
     "source": "geometry_invariant",
     "severity": "hard"
-  }
+  },
+  "Attempting 'shape' improvements for croc_pistol has regressed or failed 3 consecutive times \u2014 avoid this approach and try a fundamentally different type"
 ]

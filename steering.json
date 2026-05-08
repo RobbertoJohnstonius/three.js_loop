@@ -1,23 +1,7 @@
 {
   "force_plan": null,
   "focus_hints": [
-    "Camera at (2.5,2.0,2.5) looking at (0,0.5,0): Y is up, Z is depth, X is left-right.",
-    "Make EXACTLY 9 balloons as separate meshes each named 'balloon'. IcosahedronGeometry(0.15, 1), scale Y by 1.2. Call deleteAttribute('uv') before mergeVertices().",
-    "EXACT COLORS for the 9 balloons (in order): #006400 dark-green, #00aa00 green, #2050d0 blue, #e020a0 pink, #e02020 red, #8020c0 purple, #20c0e0 light-blue, #e0d020 yellow, #e06010 orange.",
-    "DOME CLUSTER \u2014 9 balloon centres in a 3D dome arrangement so ALL are visible from the camera. Use THESE EXACT 9 positions (x, y, z): [0.0,1.00,0.0], [0.22,0.88,0.0], [-0.22,0.88,0.0], [0.0,0.88,0.22], [0.0,0.88,-0.22], [0.18,0.76,0.18], [-0.18,0.76,0.18], [0.18,0.76,-0.18], [-0.18,0.76,-0.18]. Y ranges from 0.76 to 1.00 \u2014 natural dome, NOT all the same height.",
-    "STICKS: each stick is a THREE.Line from (bx, by-0.15, bz) to a gathering point SLIGHTLY below the cluster \u2014 converge gently toward (bx*0.15, 0.30, bz*0.15), NOT to (0,-0.3,0) and NOT straight vertical. This looks like a bouquet held in hand. const endX=bx*0.15, endY=0.30, endZ=bz*0.15; const pts=[new THREE.Vector3(bx,by-0.15,bz),new THREE.Vector3(endX,endY,endZ)]; const stick=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0xdddddd})); stick.name='string'; group.add(stick);",
-    "Roughness 0.10, metalness 0.0 on every balloon. vertexColors:true, material color:0xffffff.",
-    "deleteAttribute('uv') before mergeVertices() on IcosahedronGeometry.",
-    "PREVIOUSLY SUCCESSFUL (geometry): deleteAttribute('uv') before mergeVertices() gives connectivity=1.0."
+    "PREVIOUSLY SUCCESSFUL (detail): Design and implement a 3D orange trigger guard component with correct geometry and attach it to the pistol model, ensuring its pos"
   ],
-  "forbidden_improvements": [
-    "Do not set all balloon Y positions to the same value \u2014 the dome needs natural height variation (0.76 to 1.00).",
-    "Do not extend sticks to y=-0.55 or below \u2014 sticks should gather at about y=0.30.",
-    "Do not make sticks perfectly vertical \u2014 they should converge gently toward a gather point.",
-    "Do not spread balloon centres beyond x:[-0.30,0.30] or z:[-0.25,0.25].",
-    "Do not use more or fewer than 9 balloons \u2014 exactly 9.",
-    "Do not use TubeGeometry or CylinderGeometry for sticks \u2014 both fail connectivity. Use THREE.Line.",
-    "Do not use group.rotation.",
-    "Do not use roughness > 0.35."
-  ]
+  "forbidden_improvements": []
 }
